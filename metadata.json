@@ -1,0 +1,6 @@
+{
+  "name": "AL RAWAHI GARAGE MANAGEMENT SYSTEM",
+  "description": "Professional Offline Windows Desktop Application for Al Rawahi Garage by Akasha AI",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,51 @@
+{
+  "name": "alrawahi-garage-management-system",
+  "productName": "AL RAWAHI GARAGE MANAGEMENT SYSTEM",
+  "description": "Desktop Garage Management and Invoicing System for Al Rawahi Garage (Oman) by AKASHA AI",
+  "author": "AKASHA AI",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "main": "dist-electron/main.cjs",
+  "scripts": {
+    "dev": "vite --port=3000 --host=0.0.0.0",
+    "build": "vite build",
+    "build:electron": "esbuild electron/main.ts --bundle --platform=node --target=node22 --external:electron --external:better-sqlite3 --outfile=dist-electron/main.cjs && esbuild electron/preload.ts --bundle --platform=node --target=node22 --external:electron --outfile=dist-electron/preload.cjs",
+    "build:all": "vite build && npm run build:electron",
+    "electron:dev": "npm run build:electron && electron .",
+    "electron:build:win": "npm run build:all && electron-builder --win nsis",
+    "preview": "vite preview",
+    "clean": "rm -rf dist dist-electron release",
+    "lint": "tsc --noEmit",
+    "test": "tsx --test tests/**/*.test.ts"
+  },
+  "dependencies": {
+    "@fontsource/cairo": "^5.3.0",
+    "@google/genai": "^2.4.0",
+    "@tailwindcss/vite": "^4.3.3",
+    "@vitejs/plugin-react": "^6.1.1",
+    "dotenv": "^17.2.3",
+    "express": "^4.21.2",
+    "lucide-react": "^0.546.0",
+    "motion": "^12.23.24",
+    "react": "^19.0.1",
+    "react-dom": "^19.0.1",
+    "vite": "^8.3.0",
+    "zod": "^4.6.7",
+    "better-sqlite3": "^11.8.1"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^9.6.0",
+    "@types/express": "^4.17.21",
+    "@types/node": "^22.14.0",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "autoprefixer": "^10.4.21",
+    "electron": "^45.0.0",
+    "electron-builder": "^26.15.3",
+    "esbuild": "^0.28.0",
+    "tailwindcss": "^4.3.3",
+    "tsx": "^4.21.0",
+    "typescript": "^7.0.2"
+  }
+}

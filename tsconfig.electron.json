@@ -1,0 +1,26 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "CommonJS",
+    "moduleResolution": "bundler",
+    "outDir": "dist-electron",
+    "rootDir": ".",
+    "lib": ["ES2022"],
+    "strict": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "rewriteRelativeImportExtensions": true,
+    "sourceMap": false,
+    "noEmit": false
+  },
+  "include": [
+    "electron/**/*.ts",
+    "src/types/**/*.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "dist-electron"
+  ]
+}

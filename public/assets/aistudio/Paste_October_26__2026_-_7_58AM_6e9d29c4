@@ -1,0 +1,566 @@
+# FINAL IMPLEMENTATION PROMPT — AL RAWAHI GARAGE MANAGEMENT SYSTEM
+## Developed by AKASHA AI
+
+You are working on an existing Windows desktop application named **AL RAWAHI GARAGE MANAGEMENT SYSTEM — AKASHA AI**.
+
+The existing project uses Electron, React, TypeScript, and SQLite. Your task is to audit the actual codebase, implement all requirements below in the existing project, preserve existing working functionality and database records, and deliver a tested, production-ready Windows application.
+
+**IMPORTANT:** Do not rebuild the project from scratch. Do not replace real functionality with mockups, hardcoded demo data, or buttons that do nothing. Inspect the existing source code and database schema first, then implement the changes across the UI, business logic, SQLite database, Electron IPC, printing, and packaging.
+
+Use the uploaded garage logo as the official garage logo wherever specified below.
+
+---
+
+# 1. NON-NEGOTIABLE DEVELOPMENT RULES
+
+1. Inspect the complete project structure before modifying files.
+2. Identify existing views, components, SQLite tables, migrations, Electron main/preload files, IPC handlers, tests, and package scripts.
+3. Preserve existing customer records, vehicles, repair orders, invoices, payments, expenses, inventory, suppliers, technicians, and settings.
+4. Use safe database migrations. Never delete or recreate the existing database to simplify development.
+5. Implement real CRUD operations and connect every screen to actual SQLite data.
+6. Follow Electron security best practices: `contextIsolation: true`, `nodeIntegration: false`, sandboxing where compatible, and validated IPC.
+7. Keep financial calculations consistent. Store monetary amounts as integer baisa, where 1 OMR = 1,000 baisa.
+8. The garage's business identity and the developer's company identity must remain separate.
+9. Do not invent the garage's address, telephone number, commercial registration number, VAT number, or other business details. Let the authorized user configure them.
+10. Do not claim tests passed unless you actually ran them and verified their results.
+
+# 2. LOGIN SYSTEM AND SESSION BEHAVIOR
+
+Implement one administrator account with these initial credentials:
+
+- Default username: `admin9988`
+- Default password: `1122334455`
+- Developer authorization code for changing login credentials: `Akasha249`
+
+Requirements:
+
+1. On the first launch, initialize the administrator account securely with the specified default credentials.
+2. Display a professional Arabic login screen with right-to-left layout.
+3. Show the official garage name and the uploaded garage logo on the login screen.
+4. The user must log in before accessing the application.
+5. Maintain the authenticated session while the application remains open. Navigating between pages or minimizing/restoring the window must not request the password again.
+6. When the computer is locked or the operating system session is locked, require authentication again when the user returns. Detect the operating system lock/unlock events where Electron supports them, and implement a reliable session-locking strategy without repeatedly prompting while the computer remains unlocked.
+7. Also require authentication after the application is completely closed and subsequently reopened.
+8. Do not expose application screens while the session is locked.
+9. Provide a logout option.
+10. Allow login credentials to be changed from Settings only after the correct developer authorization code has been verified.
+11. The authorization code must not be displayed in the interface, logged, or stored as readable text in renderer code. Verify it in the trusted Electron main process using a protected implementation and compare secrets safely.
+12. Hash the administrator password using a suitable password-hashing algorithm with salt. Never store the password in plaintext.
+13. Validate the current session and all credential-change operations in the trusted process. Do not rely solely on hiding buttons in React.
+14. Prevent creation of additional administrator accounts: this application requires exactly one administrator account.
+
+**Security note:** A code embedded in a distributed desktop application cannot be guaranteed secret from someone with sufficient access to its files. Protect it as far as practical, do not expose it to the renderer, and document the remaining limitation honestly. Do not create a fake security feature that can be bypassed simply by changing frontend state.
+
+# 3. ARABIC INTERFACE AND NAVIGATION
+
+The application should be professional, clear, responsive, and primarily Arabic.
+
+- Use Arabic text and correct RTL layout throughout the application.
+- Use readable typography and consistent spacing.
+- Avoid tiny popups for important records.
+- Make buttons, field labels, validation messages, and workflow status indicators clear.
+- Maintain the existing design system where practical.
+- Keep all navigation connected to actual working views.
+
+The core navigation should organize the workflow around:
+
+- Dashboard
+- Customers
+- Cars / Vehicles
+- Register New Maintenance Operation
+- Vehicle Handover / Delivery
+- Invoices and Payments
+- Technicians
+- Spare Parts / Inventory
+- Suppliers
+- Expenses
+- Reports
+- Settings
+- System Diagnostics / System Information
+
+Do not create confusing duplicate routes for the same workflow.
+
+# 4. CUSTOMER MANAGEMENT
+
+## 4.1 Explicit customer saving
+
+Customer data must NOT be saved automatically while the user types.
+
+- Provide a clearly visible **Save Customer / حفظ العميل** button.
+- Save the customer record only when the user explicitly clicks this button and validation succeeds.
+- If the user leaves an unsaved form, warn them before discarding their changes.
+- Show clear success and error messages.
+- Prevent accidental duplicate customer records using suitable matching rules and confirmation.
+
+## 4.2 Full customer details page
+
+When a user opens a customer record, display the customer's information in a full page or full-height side panel, not a small modal popup.
+
+Show all relevant stored details, including:
+
+- Customer name
+- Telephone number and other configured contact details
+- Address and notes, if provided
+- Registered vehicles
+- Maintenance history
+- Repair orders
+- Invoices
+- Payments
+- Outstanding balances
+
+Allow authorized editing while preserving correct relationships between customers, vehicles, maintenance records, and invoices.
+
+# 5. CUSTOMER AUTOCOMPLETE WHEN REGISTERING MAINTENANCE
+
+When the user starts typing a customer's name during registration of a new maintenance operation:
+
+1. Search the existing SQLite customer records as the user types, with reasonable debouncing.
+2. Search customers already registered in the Customers section and customers saved previously through other workflows.
+3. Display matching saved customers in a dropdown directly below the customer-name input.
+4. Show enough information to distinguish customers with similar names, such as telephone number.
+5. Allow the user to click a result to select the existing customer.
+6. When selected, retrieve and associate the actual customer record and relevant information.
+7. Never create a duplicate customer simply because a maintenance operation is being created.
+8. If no matching customer exists, allow the user to enter a new customer's information.
+9. Do not automatically save that new customer while typing. Save it only when the user explicitly clicks **Save Customer**, or when the user explicitly confirms a clearly labeled action that saves the new customer as part of the maintenance-registration workflow. Do not silently save it.
+10. Handle Arabic names and partial matches correctly.
+
+# 6. VEHICLE MANAGEMENT AND MAINTENANCE WORKFLOW
+
+Do not make **Register New Vehicle / تسجيل مركبة جديدة** the primary independent action in the Cars section.
+
+The primary workflow must instead be:
+
+- **Register New Maintenance Operation / تسجيل عملية صيانة جديدة**
+- **Register Vehicle Handover / تسجيل تسليم مركبة**
+
+Vehicle registration and editing may remain available where needed, but should be integrated naturally into customer and maintenance workflows.
+
+## 6.1 Register New Maintenance Operation
+
+Build a complete working screen that lets the user:
+
+- Search for and select an existing customer.
+- Enter a new customer when necessary.
+- Select an existing vehicle or register a new vehicle through an integrated workflow.
+- Enter vehicle details such as plate number, make, model, year, and chassis number where available.
+- Prevent duplicate plate numbers and chassis numbers using database-level constraints where appropriate.
+- Record the reported problem and inspection findings.
+- Add requested services and repair tasks.
+- Add spare parts and quantities.
+- Display labor charges, service charges, parts charges, applicable tax, discounts, and estimated totals as separate line items.
+- Select the technician responsible for the maintenance operation.
+- Record intake date, expected completion date, notes, and status.
+- Save the maintenance operation only after an explicit user action.
+- Generate a unique maintenance/repair order number.
+- Link the operation to the correct customer and vehicle.
+
+## 6.2 Repair-order lifecycle
+
+Implement a clear repair lifecycle using the existing data model where possible:
+
+1. Vehicle intake
+2. Inspection
+3. Awaiting customer approval, if applicable
+4. Repair in progress
+5. Quality inspection
+6. Ready for handover
+7. Handed over / completed
+
+Provide a clear action for **Close / Complete Maintenance Operation**.
+
+Before completion, validate required workflow steps and inventory consistency. Do not allow a repair order to be cancelled if parts have been issued unless the system first handles the corresponding stock reversal correctly.
+
+Do not force full payment as a condition of closing a repair unless an existing, explicitly configured business rule requires it. Preserve outstanding balances accurately.
+
+# 7. VEHICLE HANDOVER AND ITEMIZED ACCOUNT
+
+The **Register Vehicle Handover / تسجيل تسليم مركبة** screen must be a full, usable workflow, not a placeholder.
+
+At the top, provide a search field that searches existing vehicles, customers, and maintenance/repair orders.
+
+After selecting a vehicle or maintenance order, display its actual linked records and an itemized financial summary.
+
+Include the following line items where applicable:
+
+- Labor charges
+- Maintenance and service charges
+- Spare parts, including descriptions, quantities, unit prices, and line totals
+- Applicable VAT or other configured tax
+- Other explicitly configured charges
+- Discount
+- Final payable amount
+- Payments already received
+- Remaining balance
+
+Every amount must come from actual stored records and validated calculations, not demo values.
+
+## 7.1 Discount
+
+Provide an optional **Add Discount / إضافة خصم** action.
+
+- Allow an authorized user to enter a discount amount.
+- Validate that the discount is non-negative and does not exceed the permitted total.
+- Recalculate the applicable tax and final total according to the configured tax treatment and discount policy.
+- Update the invoice preview immediately.
+- Save the discount as part of the transaction/invoice records.
+- Preserve the original line items and record the discount transparently.
+- Ensure the invoice, payment balance, and reports use the same final amounts.
+- Avoid floating-point errors by calculating using integer baisa.
+
+## 7.2 Payment method
+
+At handover, provide a payment-method selector using clearly labeled options, such as:
+
+- Cash
+- Card
+- Bank transfer
+- Other configured methods
+
+Support full payment, partial payment, and unpaid/outstanding balances according to the existing accounting model.
+
+Do not record a payment until the user explicitly confirms it. A selected payment method must not automatically imply that payment has been received.
+
+Record the amount actually paid, date, method, and reference if applicable. Update the outstanding balance consistently.
+
+## 7.3 Complete handover
+
+Provide a clear confirmation before marking a vehicle as handed over.
+
+After confirmation:
+
+- Update the relevant maintenance/repair order status.
+- Record the handover date and any relevant notes.
+- Ensure the invoice and payment records are correctly linked.
+- Preserve outstanding balances where applicable.
+- Prevent accidental duplicate handovers or duplicate invoice issuance.
+- Make the next available actions obvious: view invoice, print invoice, export PDF, or record another payment.
+
+# 8. INVOICES — IMPLEMENT AND VERIFY THE REAL WORKFLOW
+
+An invoice must actually exist as a saved, retrievable record in the application. A visual invoice preview alone is not sufficient.
+
+Audit the current invoicing implementation because the existing invoice functionality is reportedly not appearing correctly.
+
+Implement or repair the complete flow:
+
+1. Select a real maintenance/repair order.
+2. Calculate and preview its itemized account.
+3. Apply any authorized discount.
+4. Calculate the final total and applicable tax.
+5. Explicitly issue and save the invoice.
+6. Generate a unique invoice number.
+7. Link the invoice to the correct customer, vehicle, maintenance order, and payments.
+8. Make the saved invoice accessible from the Invoices section and the relevant customer/repair-order details.
+9. Allow users to reopen and retrieve saved invoices after restarting the application.
+10. Prevent duplicate invoice creation when reopening an existing invoice.
+11. Clearly distinguish a draft/preview from an issued invoice.
+
+The invoice must show:
+
+- The uploaded garage logo
+- Configured garage name and contact information
+- Commercial registration number and VAT number, if configured
+- Invoice number and issue date
+- Customer details
+- Vehicle details
+- Maintenance/repair order reference
+- Itemized services and labor
+- Itemized spare parts
+- Applicable tax and tax rate
+- Discount
+- Total payable
+- Payments received
+- Remaining balance, if any
+- Payment status
+- Any legally or operationally required fields configured by the garage
+
+Use proper Arabic RTL typography and a clean, professional layout.
+
+## 8.1 Invoice logo and watermark
+
+Use the uploaded image as the garage's official logo.
+
+- Display the logo in the invoice header.
+- Add a subtle, transparent watermark of the same logo in the invoice background.
+- The watermark must not reduce text readability, cover totals, or obscure the tax details.
+- Keep the logo properly scaled and preserve its aspect ratio.
+- Store the logo in a persistent, appropriate application-data location or use another reliable method that will continue working in the installed application.
+- Do not rely on a temporary upload path that disappears after packaging.
+
+## 8.2 Printing and PDF export
+
+Every saved invoice must provide working actions for:
+
+- **Print Invoice / طباعة الفاتورة**
+- **Export as PDF / تصدير PDF**
+
+The PDF must preserve the invoice layout, Arabic text, logo, watermark, itemized values, and totals.
+
+Implement printing through secure Electron IPC.
+
+When a saved invoice is reopened, printing or PDF export must use the saved invoice record. Reopening a saved invoice must not issue a new invoice or automatically print it again.
+
+# 9. PRINTER SETTINGS
+
+Add a dedicated printer-settings section in Settings.
+
+Requirements:
+
+- Enumerate available printers using Electron's supported printer APIs.
+- Display available printer names and status where supported.
+- Allow the user to select and persist a default printer.
+- Provide a test-print action.
+- Support A4 invoice printing and supported thermal-paper sizes.
+- Allow the user to choose paper size and appropriate invoice layout.
+- Provide an optional setting for automatically printing an invoice the first time it is issued.
+- Provide an option to enable or disable print preview where technically supported.
+- Persist all printer settings across application restarts.
+- Handle missing printers, unavailable printers, failed print jobs, and PDF errors with understandable Arabic messages.
+- Never repeatedly auto-print an invoice when the user reopens it.
+- Never silently issue a new invoice as a side effect of printing.
+
+Do not claim that a printer is available or that a print succeeded unless the actual operation confirms it.
+
+# 10. DASHBOARD AND BUSINESS DATA
+
+Audit the dashboard and ensure its figures come from real database queries.
+
+Display meaningful values such as:
+
+- Total customers
+- Registered vehicles
+- Maintenance operations in progress
+- Completed operations
+- Today's revenue and payments received
+- Outstanding customer balances
+- Spare-parts stock indicators
+- Expenses
+- Net profit where the underlying data supports an accurate calculation
+
+Distinguish invoiced sales from cash actually collected. Do not treat an unpaid invoice as received revenue.
+
+Avoid hardcoded numbers, sample charts presented as real data, and misleading financial calculations.
+
+# 11. INVENTORY, TECHNICIANS, SUPPLIERS, AND EXPENSES
+
+Audit existing screens and make sure each feature works with SQLite.
+
+## Inventory
+
+- Track parts, descriptions, SKU where used, stock quantities, purchase cost, and selling price.
+- Record parts issued to maintenance operations.
+- Update stock atomically when parts are issued or reversed.
+- Prevent negative stock unless an explicit business rule permits it.
+- Preserve an auditable record of stock movements.
+
+## Technicians
+
+- Support real technician records and assignment to maintenance operations.
+- Allow safe activation/deactivation.
+- Prevent deletion that would break historical maintenance records.
+
+## Suppliers
+
+- Support real supplier records and editing.
+- Preserve relationships with stock purchases and historical records.
+
+## Expenses
+
+- Support expense categories, dates, descriptions, and amounts.
+- Use integer baisa for monetary amounts.
+- Ensure reports include actual expenses only.
+
+Do not introduce duplicate screens if equivalent functional views already exist.
+
+# 12. REPORTS AND FINANCIAL CONSISTENCY
+
+Verify the existing reports and ensure all figures are based on the same validated accounting rules.
+
+Where supported by actual records, provide:
+
+- Invoiced sales
+- Payments collected
+- Outstanding balances
+- Tax collected or payable as appropriate
+- Expenses
+- Parts costs
+- Labor/service amounts
+- Profit calculations with clearly defined methodology
+- Date-range filtering
+- Export/print options where implemented
+
+Do not label invoice totals as collected cash.
+
+Avoid double-counting partial payments, invoices, discounts, expenses, and inventory costs.
+
+Reconcile report totals with invoice details and the dashboard.
+
+# 13. GARAGE SETTINGS
+
+Create or repair a fully functional settings screen for garage information.
+
+Include editable fields for:
+
+- Garage name
+- Logo
+- Telephone and contact details
+- Address
+- Commercial registration number
+- VAT registration number
+- Applicable VAT rate
+- Invoice numbering/settings where appropriate
+- Printer settings
+- Backup settings
+
+For Oman, use a configurable VAT rate. The expected default is 5%, but do not treat this as a substitute for verifying the business's applicable tax treatment. Do not calculate tax twice or invent a tax registration number.
+
+The garage's configured identity must appear on invoices and on the garage-facing parts of the application.
+
+# 14. SYSTEM DIAGNOSTICS AND DEVELOPER INFORMATION
+
+In System Diagnostics / System Information, include a separate section for the developer company:
+
+**AKASHA AI**
+
+The developer information must be clearly distinct from the garage's business identity.
+
+Use the following developer attribution:
+
+- Company: AKASHA AI
+- Product: AL RAWAHI GARAGE MANAGEMENT SYSTEM
+- Attribution: Developed by AKASHA AI
+
+Do not replace the garage name or logo with Akasha AI branding on customer invoices. The uploaded garage logo belongs to the garage.
+
+System Diagnostics should also display useful operational information, such as:
+
+- Application version
+- Electron/runtime version where appropriate
+- Database status
+- Database path where safe
+- Backup status and last backup date
+- Printer status where available
+- Relevant error logs without passwords, secrets, or personal data beyond what is necessary
+
+Diagnostics must not expose credentials, the developer authorization code, API keys, or sensitive database contents.
+
+# 15. BACKUP AND DATA PROTECTION
+
+Preserve the existing SQLite database and all user records.
+
+Implement or verify reliable backups using SQLite's supported online backup mechanisms or another safe consistent method.
+
+- Store backups in a persistent application-data directory.
+- Provide a manual backup action.
+- Show backup success or failure clearly.
+- Verify that backups are readable and restorable.
+- Keep integrity checks or checksums where useful.
+- Do not automatically delete user records or the primary database.
+- Do not overwrite a working database during migration without a verified backup.
+- Do not claim backup integrity simply because a file exists.
+
+# 16. APPLICATION INSTALLER AND PRODUCTION BUILD
+
+The final deliverable must be a real Windows desktop application.
+
+Audit and fix:
+
+- Electron development startup
+- Vite development server integration
+- Production frontend build
+- Electron packaging
+- SQLite native-module compatibility with the selected Electron version
+- Windows installer configuration
+- Application-data/database paths
+- Logo and asset paths after packaging
+- Printing and PDF export in the packaged application
+
+Ensure the development scripts start the required processes correctly. Avoid a blank gray window caused by a missing Vite server or incorrect production HTML path.
+
+The installed application must:
+
+- Launch without requiring a development server.
+- Use its persistent database in the appropriate Windows application-data directory.
+- Preserve customer records and settings after restarts and updates.
+- Include the required assets.
+- Work without exposing development secrets.
+- Have a reliable installer/build process.
+
+Do not delete or replace the existing production database during packaging or upgrades.
+
+# 17. TESTING REQUIREMENTS
+
+Run the actual available test suite and add targeted tests for the new and repaired workflows.
+
+At minimum, verify:
+
+1. First-launch administrator initialization.
+2. Successful and unsuccessful login.
+3. Session persistence during normal application navigation.
+4. Session locking when the operating system is locked and authentication on return.
+5. Authentication after a complete application restart.
+6. Changing credentials with the correct developer authorization code.
+7. Rejection of credential changes with an incorrect code.
+8. Customer data is not saved while typing.
+9. Customer data saves only after explicit confirmation.
+10. Customer autocomplete finds saved customers.
+11. Selecting an existing customer does not create a duplicate.
+12. Creating a maintenance operation with a selected technician.
+13. Vehicle and repair-order relationships remain correct.
+14. Repair lifecycle and completion.
+15. Parts issuance and inventory consistency.
+16. Handover search and itemized account display.
+17. Discount calculations and tax treatment.
+18. Partial payments, full payments, and remaining balances.
+19. Invoice issuance, unique numbering, persistence, and retrieval.
+20. No duplicate invoice when reopening an existing invoice.
+21. Logo and watermark rendering.
+22. PDF export.
+23. Printer enumeration, selection, and error handling where testable.
+24. Automatic printing only on the first invoice issuance when configured.
+25. Dashboard and report reconciliation.
+26. Database migration and backup restoration.
+27. Production build and Windows installer creation.
+
+Do not claim physical printer testing was completed unless a real printer was available and used. Clearly identify tests that require manual verification on the user's computer.
+
+# 18. REQUIRED IMPLEMENTATION WORKFLOW
+
+Follow this sequence:
+
+**Phase A — Audit**
+- Inspect the repository and existing architecture.
+- Identify incomplete, missing, broken, or duplicated features.
+- Determine why the actual invoice is not appearing.
+- Check existing database schema and migration history.
+- Produce a concise audit and implementation plan.
+
+**Phase B — Implement**
+- Make changes directly in the existing codebase.
+- Update database migrations, backend logic, Electron IPC/preload, frontend screens, styles, and tests as required.
+- Use the uploaded garage logo and ensure it survives production packaging.
+- Complete the full maintenance-to-handover-to-invoice workflow.
+
+**Phase C — Verify**
+- Run lint, tests, and production builds.
+- Fix the actual errors instead of merely describing them.
+- Verify persistence and calculations.
+- Review Electron security boundaries.
+- Check the packaged application's file and asset paths.
+
+**Phase D — Deliver**
+- Summarize what changed and list the actual files modified.
+- Report the exact commands executed and their real results.
+- List any remaining limitations honestly.
+- Provide the exact commands for launching the development app and building the Windows installer.
+- If possible in the current environment, generate and verify the installer artifact.
+- If the installer cannot be generated here, state why and provide the exact next steps.
+
+## FINAL ACCEPTANCE CRITERION
+
+The project is not complete merely because the interface looks correct or a test suite passes. The real user workflow must work end to end:
+
+**Log in → Find or register customer → Select/register vehicle → Register maintenance operation → Assign technician → Record services and parts → Complete maintenance → Open vehicle handover → Review itemized charges → Apply optional discount → Record payment method and actual payment → Issue and save invoice → Print or export PDF → Retrieve the same invoice later without duplication.**
+
+Implement the requirements in the existing project, preserving all existing customer and garage data. Do not stop after writing a plan or making only superficial UI changes.
