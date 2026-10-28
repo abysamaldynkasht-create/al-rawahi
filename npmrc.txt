@@ -1,0 +1,7 @@
+# AL RAWAHI GARAGE MANAGEMENT SYSTEM
+cache=C:\Users\%USERNAME%\AppData\Local\npm-cache
+fund=false
+audit=false
+update-notifier=false
+prefer-offline=true
+loglevel=notice
