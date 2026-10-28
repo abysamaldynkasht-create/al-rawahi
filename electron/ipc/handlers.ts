@@ -37,6 +37,7 @@ import {
   IdParamSchema,
   SearchQuerySchema,
   InvoiceInputSchema,
+  InvoiceUpdateSchema,
   PaymentInputSchema,
   TechnicianInputSchema,
   WorkerOvertimeInputSchema,
@@ -3293,7 +3294,7 @@ export function registerIpcHandlers(): void {
         SELECT 
           i.*,
           c.full_name as customer_name, c.phone as customer_phone, COALESCE(c.is_permanent, 1) as customer_is_permanent,
-          v.plate_number as vehicle_plate
+          v.plate_number as vehicle_plate, v.vin as vehicle_vin, v.make as vehicle_make, v.model as vehicle_model, v.year as vehicle_year
         FROM invoices i
         JOIN customers c ON c.id = i.customer_id
         LEFT JOIN vehicles v ON v.id = i.vehicle_id
@@ -3333,6 +3334,10 @@ export function registerIpcHandlers(): void {
           isCustomerPermanent: r.customer_is_permanent === 1,
           vehicleId: r.vehicle_id || undefined,
           vehiclePlate: r.vehicle_plate || undefined,
+          vehicleVin: r.vehicle_vin || undefined,
+          vehicleMake: r.vehicle_make || undefined,
+          vehicleModel: r.vehicle_model || undefined,
+          vehicleYear: r.vehicle_year || undefined,
           invoiceDate: r.invoice_date,
           status: r.status,
           subtotalPartsBaisa: r.subtotal_parts_baisa,
@@ -3366,7 +3371,7 @@ export function registerIpcHandlers(): void {
         SELECT 
           i.*,
           c.full_name as customer_name, c.phone as customer_phone, COALESCE(c.is_permanent, 1) as customer_is_permanent,
-          v.plate_number as vehicle_plate
+          v.plate_number as vehicle_plate, v.vin as vehicle_vin, v.make as vehicle_make, v.model as vehicle_model, v.year as vehicle_year
         FROM invoices i
         JOIN customers c ON c.id = i.customer_id
         LEFT JOIN vehicles v ON v.id = i.vehicle_id
@@ -3402,6 +3407,10 @@ export function registerIpcHandlers(): void {
           isCustomerPermanent: r.customer_is_permanent === 1,
           vehicleId: r.vehicle_id || undefined,
           vehiclePlate: r.vehicle_plate || undefined,
+          vehicleVin: r.vehicle_vin || undefined,
+          vehicleMake: r.vehicle_make || undefined,
+          vehicleModel: r.vehicle_model || undefined,
+          vehicleYear: r.vehicle_year || undefined,
           invoiceDate: r.invoice_date,
           status: r.status,
           subtotalPartsBaisa: r.subtotal_parts_baisa,
@@ -3433,11 +3442,23 @@ export function registerIpcHandlers(): void {
       const now = new Date();
       const nowIso = now.toISOString();
       const invoiceDate = nowIso.slice(0, 10);
-      const randomSeq = Math.floor(1000 + Math.random() * 9000);
-      const invoiceNumber = `INV-${invoiceDate.replace(/-/g, '')}-${randomSeq}`;
+      const countRow = db.prepare("SELECT count(*) as count FROM invoices WHERE invoice_date = ?").get(invoiceDate) as { count: number };
+      const invoiceNumber = `INV-${invoiceDate.replace(/-/g, '')}-${String(countRow.count + 1001).padStart(4, '0')}`;
 
-      const subtotalParts = validated.subtotalPartsBaisa || 0;
-      const subtotalLabor = validated.subtotalLaborBaisa || 0;
+      let subtotalParts = validated.subtotalPartsBaisa || 0;
+      let subtotalLabor = validated.subtotalLaborBaisa || 0;
+
+      if (validated.items && validated.items.length > 0) {
+        let calculatedParts = 0;
+        let calculatedLabor = 0;
+        for (const it of validated.items) {
+          if (it.itemType === 'PART') calculatedParts += it.lineTotalBaisa;
+          else if (it.itemType === 'LABOR') calculatedLabor += it.lineTotalBaisa;
+        }
+        if (subtotalParts === 0) subtotalParts = calculatedParts;
+        if (subtotalLabor === 0) subtotalLabor = calculatedLabor;
+      }
+
       const discount = validated.discountBaisa || 0;
       const taxRate = validated.taxRatePercent ?? 5.0;
 
@@ -3447,33 +3468,119 @@ export function registerIpcHandlers(): void {
       const paidAmount = 0;
       const balanceDue = grandTotal;
 
-      db.prepare(`
-        INSERT INTO invoices (
-          id, invoice_number, repair_order_id, customer_id, vehicle_id,
-          invoice_date, status, subtotal_parts_baisa, subtotal_labor_baisa,
-          discount_baisa, tax_rate_percent, tax_amount_baisa, grand_total_baisa,
-          paid_amount_baisa, balance_due_baisa, invoice_language, retention_prompted,
-          notes, created_at
-        ) VALUES (
-          ?, ?, ?, ?, ?,
-          ?, 'ISSUED', ?, ?,
-          ?, ?, ?, ?,
-          ?, ?, ?, 0,
-          ?, datetime('now')
-        )
-      `).run(
-        id, invoiceNumber, validated.repairOrderId || null, validated.customerId, validated.vehicleId || null,
-        invoiceDate, subtotalParts, subtotalLabor,
-        discount, taxRate, taxAmount, grandTotal,
-        paidAmount, balanceDue, validated.invoiceLanguage || 'ar',
-        validated.notes || null
-      );
+      const createdItems: InvoiceItemDTO[] = [];
+
+      const executeTx = (fn: () => void) => {
+        if (typeof db.transaction === 'function') {
+          db.transaction(fn)();
+        } else {
+          db.exec('BEGIN TRANSACTION;');
+          try {
+            fn();
+            db.exec('COMMIT;');
+          } catch (err) {
+            try { db.exec('ROLLBACK;'); } catch {}
+            throw err;
+          }
+        }
+      };
+
+      const initialStatus = validated.status || 'ISSUED';
+
+      executeTx(() => {
+        db.prepare(`
+          INSERT INTO invoices (
+            id, invoice_number, repair_order_id, customer_id, vehicle_id,
+            invoice_date, status, subtotal_parts_baisa, subtotal_labor_baisa,
+            discount_baisa, tax_rate_percent, tax_amount_baisa, grand_total_baisa,
+            paid_amount_baisa, balance_due_baisa, invoice_language, retention_prompted,
+            notes, created_at
+          ) VALUES (
+            ?, ?, ?, ?, ?,
+            ?, ?, ?, ?,
+            ?, ?, ?, ?,
+            ?, ?, ?, 0,
+            ?, datetime('now')
+          )
+        `).run(
+          id, invoiceNumber, validated.repairOrderId || null, validated.customerId, validated.vehicleId || null,
+          invoiceDate, initialStatus, subtotalParts, subtotalLabor,
+          discount, taxRate, taxAmount, grandTotal,
+          paidAmount, balanceDue, validated.invoiceLanguage || 'ar',
+          validated.notes || null
+        );
+
+        if (validated.items && validated.items.length > 0) {
+          for (const it of validated.items) {
+            const itemId = crypto.randomUUID();
+            const unit = it.unit || (it.itemType === 'LABOR' ? 'خدمة' : 'قطعة');
+
+            db.prepare(`
+              INSERT INTO invoice_items (
+                id, invoice_id, item_type, source_id, description, quantity, unit,
+                unit_price_baisa, cost_price_baisa, line_total_baisa
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `).run(
+              itemId,
+              id,
+              it.itemType,
+              it.sourceId || null,
+              it.description,
+              it.quantity,
+              unit,
+              it.unitPriceBaisa,
+              it.costPriceBaisa || 0,
+              it.lineTotalBaisa
+            );
+
+            createdItems.push({
+              id: itemId,
+              invoiceId: id,
+              itemType: it.itemType,
+              sourceId: it.sourceId || undefined,
+              description: it.description,
+              quantity: it.quantity,
+              unit,
+              unitPriceBaisa: it.unitPriceBaisa,
+              costPriceBaisa: it.costPriceBaisa || 0,
+              lineTotalBaisa: it.lineTotalBaisa,
+            });
+
+            // If item is from inventory and not draft quotation, decrement stock exactly once
+            if (initialStatus !== 'DRAFT' && it.itemType === 'PART' && it.sourceId && !validated.repairOrderId) {
+              const stockItem = db.prepare('SELECT id, name, quantity_in_stock, purchase_cost_baisa FROM inventory_items WHERE id = ?').get(it.sourceId) as any;
+              if (stockItem) {
+                const newStock = stockItem.quantity_in_stock - it.quantity;
+                db.prepare('UPDATE inventory_items SET quantity_in_stock = ? WHERE id = ?').run(newStock, stockItem.id);
+
+                db.prepare(`
+                  INSERT INTO inventory_movements (
+                    id, item_id, movement_type, quantity_delta, unit_cost_baisa,
+                    reference_type, reference_id, reason, created_by, created_at
+                  ) VALUES (?, ?, 'RO_ISSUE', ?, ?, 'REPAIR_ORDER', ?, ?, 'Operator', datetime('now'))
+                `).run(
+                  crypto.randomUUID(),
+                  stockItem.id,
+                  -it.quantity,
+                  stockItem.purchase_cost_baisa,
+                  id,
+                  `Invoice sale: ${invoiceNumber} (${it.description})`
+                );
+              }
+            }
+          }
+        }
+
+        if (initialStatus !== 'DRAFT' && validated.repairOrderId) {
+          db.prepare("UPDATE repair_orders SET status = 'COMPLETED', completed_at = datetime('now') WHERE id = ?").run(validated.repairOrderId);
+        }
+      });
 
       // Fetch newly created
       const res = db.prepare(`
         SELECT 
           i.*, c.full_name as customer_name, c.phone as customer_phone, COALESCE(c.is_permanent, 1) as customer_is_permanent,
-          v.plate_number as vehicle_plate
+          v.plate_number as vehicle_plate, v.vin as vehicle_vin, v.make as vehicle_make, v.model as vehicle_model, v.year as vehicle_year
         FROM invoices i
         JOIN customers c ON c.id = i.customer_id
         LEFT JOIN vehicles v ON v.id = i.vehicle_id
@@ -3492,8 +3599,12 @@ export function registerIpcHandlers(): void {
           isCustomerPermanent: res?.customer_is_permanent === 1,
           vehicleId: validated.vehicleId || undefined,
           vehiclePlate: res?.vehicle_plate || undefined,
+          vehicleVin: res?.vehicle_vin || undefined,
+          vehicleMake: res?.vehicle_make || undefined,
+          vehicleModel: res?.vehicle_model || undefined,
+          vehicleYear: res?.vehicle_year || undefined,
           invoiceDate,
-          status: 'ISSUED',
+          status: initialStatus,
           subtotalPartsBaisa: subtotalParts,
           subtotalLaborBaisa: subtotalLabor,
           discountBaisa: discount,
@@ -3505,11 +3616,162 @@ export function registerIpcHandlers(): void {
           invoiceLanguage: validated.invoiceLanguage || 'ar',
           retentionPrompted: false,
           notes: validated.notes || undefined,
+          items: createdItems,
           createdAt: nowIso,
         },
       };
     } catch (err: unknown) {
       return { success: false, error: err instanceof Error ? err.message : 'Failed to create invoice' };
+    }
+  });
+
+  ipcMain.handle('invoices:update', async (_event, payload: unknown): Promise<IpcResult<InvoiceDTO>> => {
+    try {
+      const validated = InvoiceUpdateSchema.parse(payload);
+      const db = getDatabase();
+
+      const existing = db.prepare('SELECT * FROM invoices WHERE id = ?').get(validated.id) as any;
+      if (!existing) {
+        return { success: false, error: 'Invoice or quotation not found' };
+      }
+
+      let subtotalParts = 0;
+      let subtotalLabor = 0;
+
+      if (validated.items && validated.items.length > 0) {
+        for (const it of validated.items) {
+          if (it.itemType === 'PART') subtotalParts += it.lineTotalBaisa;
+          else if (it.itemType === 'LABOR') subtotalLabor += it.lineTotalBaisa;
+        }
+      } else if (!validated.items) {
+        subtotalParts = existing.subtotal_parts_baisa || 0;
+        subtotalLabor = existing.subtotal_labor_baisa || 0;
+      }
+
+      const discount = validated.discountBaisa !== undefined ? validated.discountBaisa : (existing.discount_baisa || 0);
+      const taxRate = validated.taxRatePercent !== undefined ? validated.taxRatePercent : (existing.tax_rate_percent ?? 5.0);
+      const taxableBase = Math.max(0, subtotalParts + subtotalLabor - discount);
+      const taxAmount = Math.round((taxableBase * taxRate) / 100);
+      const grandTotal = taxableBase + taxAmount;
+      const paidAmount = existing.paid_amount_baisa || 0;
+      const balanceDue = Math.max(0, grandTotal - paidAmount);
+
+      let nextStatus = validated.status || existing.status;
+      if (paidAmount >= grandTotal && grandTotal > 0 && nextStatus !== 'DRAFT') {
+        nextStatus = 'PAID';
+      } else if (paidAmount > 0 && paidAmount < grandTotal && nextStatus !== 'DRAFT') {
+        nextStatus = 'PARTIALLY_PAID';
+      }
+
+      const executeTx = (fn: () => void) => {
+        if (typeof db.transaction === 'function') {
+          db.transaction(fn)();
+        } else {
+          db.exec('BEGIN TRANSACTION;');
+          try {
+            fn();
+            db.exec('COMMIT;');
+          } catch (err) {
+            try { db.exec('ROLLBACK;'); } catch {}
+            throw err;
+          }
+        }
+      };
+
+      executeTx(() => {
+        db.prepare(`
+          UPDATE invoices
+          SET status = ?, subtotal_parts_baisa = ?, subtotal_labor_baisa = ?,
+              discount_baisa = ?, tax_rate_percent = ?, tax_amount_baisa = ?,
+              grand_total_baisa = ?, balance_due_baisa = ?, notes = ?,
+              invoice_language = ?
+          WHERE id = ?
+        `).run(
+          nextStatus, subtotalParts, subtotalLabor,
+          discount, taxRate, taxAmount, grandTotal,
+          balanceDue, validated.notes !== undefined ? validated.notes : existing.notes,
+          validated.invoiceLanguage || existing.invoice_language || 'ar',
+          validated.id
+        );
+
+        if (validated.items) {
+          db.prepare('DELETE FROM invoice_items WHERE invoice_id = ?').run(validated.id);
+          for (const it of validated.items) {
+            const itemId = crypto.randomUUID();
+            const unit = it.unit || (it.itemType === 'LABOR' ? 'خدمة' : 'قطعة');
+            db.prepare(`
+              INSERT INTO invoice_items (
+                id, invoice_id, item_type, source_id, description, quantity, unit,
+                unit_price_baisa, cost_price_baisa, line_total_baisa
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `).run(
+              itemId, validated.id, it.itemType, it.sourceId || null,
+              it.description, it.quantity, unit, it.unitPriceBaisa,
+              it.costPriceBaisa || 0, it.lineTotalBaisa
+            );
+          }
+        }
+      });
+
+      const updatedRow = db.prepare(`
+        SELECT 
+          i.*, c.full_name as customer_name, c.phone as customer_phone, COALESCE(c.is_permanent, 1) as customer_is_permanent,
+          v.plate_number as vehicle_plate, v.vin as vehicle_vin, v.make as vehicle_make, v.model as vehicle_model, v.year as vehicle_year
+        FROM invoices i
+        JOIN customers c ON c.id = i.customer_id
+        LEFT JOIN vehicles v ON v.id = i.vehicle_id
+        WHERE i.id = ?
+      `).get(validated.id) as any;
+
+      const itemsInDb = db.prepare('SELECT * FROM invoice_items WHERE invoice_id = ?').all(validated.id) as any[];
+
+      return {
+        success: true,
+        data: {
+          id: updatedRow.id,
+          invoiceNumber: updatedRow.invoice_number,
+          repairOrderId: updatedRow.repair_order_id || undefined,
+          customerId: updatedRow.customer_id,
+          customerName: updatedRow.customer_name,
+          customerPhone: updatedRow.customer_phone || undefined,
+          isCustomerPermanent: updatedRow.customer_is_permanent === 1,
+          vehicleId: updatedRow.vehicle_id || undefined,
+          vehiclePlate: updatedRow.vehicle_plate || undefined,
+          vehicleVin: updatedRow.vehicle_vin || undefined,
+          vehicleMake: updatedRow.vehicle_make || undefined,
+          vehicleModel: updatedRow.vehicle_model || undefined,
+          vehicleYear: updatedRow.vehicle_year || undefined,
+          invoiceDate: updatedRow.invoice_date,
+          status: updatedRow.status,
+          subtotalPartsBaisa: updatedRow.subtotal_parts_baisa,
+          subtotalLaborBaisa: updatedRow.subtotal_labor_baisa,
+          discountBaisa: updatedRow.discount_baisa,
+          taxRatePercent: updatedRow.tax_rate_percent,
+          taxAmountBaisa: updatedRow.tax_amount_baisa,
+          grandTotalBaisa: updatedRow.grand_total_baisa,
+          paidAmountBaisa: updatedRow.paid_amount_baisa,
+          balanceDueBaisa: updatedRow.balance_due_baisa,
+          invoiceLanguage: updatedRow.invoice_language || 'ar',
+          retentionPrompted: updatedRow.retention_prompted === 1,
+          printedAt: updatedRow.printed_at || undefined,
+          notes: updatedRow.notes || undefined,
+          items: itemsInDb.map((item) => ({
+            id: item.id,
+            invoiceId: item.invoice_id,
+            itemType: item.item_type,
+            sourceId: item.source_id || undefined,
+            description: item.description,
+            quantity: item.quantity,
+            unit: item.unit,
+            unitPriceBaisa: item.unit_price_baisa,
+            costPriceBaisa: item.cost_price_baisa,
+            lineTotalBaisa: item.line_total_baisa,
+          })),
+          createdAt: updatedRow.created_at,
+        },
+      };
+    } catch (err: unknown) {
+      return { success: false, error: err instanceof Error ? err.message : 'Failed to update invoice/quotation' };
     }
   });
 
@@ -3619,10 +3881,22 @@ export function registerIpcHandlers(): void {
       const invoiceId = IdParamSchema.parse(invoiceIdParam);
       const db = getDatabase();
 
-      const inv = db.prepare('SELECT id FROM invoices WHERE id = ?').get(invoiceId) as any;
-      if (!inv) return { success: false, error: 'الفاتورة غير موجودة' };
+      const inv = db.prepare(`
+        SELECT 
+          i.*,
+          c.full_name as customer_name, c.phone as customer_phone, COALESCE(c.is_permanent, 1) as customer_is_permanent,
+          v.plate_number as vehicle_plate, v.make as vehicle_make, v.model as vehicle_model, v.year as vehicle_year
+        FROM invoices i
+        JOIN customers c ON c.id = i.customer_id
+        LEFT JOIN vehicles v ON v.id = i.vehicle_id
+        WHERE i.id = ?
+      `).get(invoiceId) as any;
+      if (!inv) return { success: false, error: 'الفاتورة غير موجودة أو تم حذفها' };
 
-      const printerSetting = db.prepare("SELECT value FROM garage_settings WHERE key = 'default_printer'").get() as { value: string } | undefined;
+      const itemRows = db.prepare('SELECT * FROM invoice_items WHERE invoice_id = ?').all(invoiceId) as any[];
+
+      // Query configured printer in settings table (fixed from garage_settings)
+      const printerSetting = db.prepare("SELECT value FROM settings WHERE key = 'default_printer'").get() as { value: string } | undefined;
       const configuredPrinter = printerSetting?.value?.trim() || '';
 
       const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
@@ -3644,23 +3918,45 @@ export function registerIpcHandlers(): void {
           }
         }
 
-        // Silent direct printing to hardware printer without browser preview delay
-        await new Promise<void>((resolve, reject) => {
-          win.webContents.print(
-            {
-              silent: true,
-              deviceName: targetPrinter || undefined,
-              printBackground: true,
-            },
-            (success, failureReason) => {
-              if (!success && failureReason && failureReason !== 'cancelled') {
-                reject(new Error(`فشل إرسال أمر الطباعة المباشرة: ${failureReason}`));
-              } else {
-                resolve();
-              }
-            }
-          );
+        // Generate complete standalone HTML document for the invoice
+        const invoiceHtml = generateInvoicePrintHtml(inv, itemRows);
+
+        // Silent direct printing using a dedicated hidden print window
+        const printWin = new BrowserWindow({
+          show: false,
+          width: 800,
+          height: 1100,
+          webPreferences: {
+            nodeIntegration: false,
+            contextIsolation: true,
+          },
         });
+
+        try {
+          await new Promise<void>((resolve, reject) => {
+            printWin.webContents.on('did-finish-load', () => {
+              printWin.webContents.print(
+                {
+                  silent: true,
+                  deviceName: targetPrinter || undefined,
+                  printBackground: true,
+                },
+                (success, failureReason) => {
+                  if (!success && failureReason && failureReason !== 'cancelled') {
+                    reject(new Error(`فشل إرسال أمر الطباعة المباشرة: ${failureReason}`));
+                  } else {
+                    resolve();
+                  }
+                }
+              );
+            });
+            printWin.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(invoiceHtml)}`);
+          });
+        } finally {
+          if (!printWin.isDestroyed()) {
+            printWin.close();
+          }
+        }
       }
 
       // Record printed_at timestamp in database on successful execution
@@ -4316,4 +4612,165 @@ function checkRetentionEligibilityInternal(db: any, invoiceId: string): { eligib
       createdAt: inv.created_at,
     },
   };
+}
+
+function escapeHtml(str: string): string {
+  if (!str) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+function generateInvoicePrintHtml(inv: any, items: any[]): string {
+  const isQuotation = inv.status === 'DRAFT' || inv.is_quotation;
+  const isPaid = inv.status === 'PAID' || inv.balance_due_baisa <= 0;
+  const formatOMRStr = (baisa: number) => `<span dir="ltr">${(baisa / 1000).toFixed(3)}</span> ر.ع`;
+
+  const rowsHtml = items.map((it, idx) => `
+    <tr>
+      <td style="padding: 9px 8px; border-bottom: 1px solid #e2e8f0; text-align: center; font-family: monospace;">${idx + 1}</td>
+      <td style="padding: 9px 8px; border-bottom: 1px solid #e2e8f0; text-align: center; font-weight: bold; color: ${it.item_type === 'LABOR' ? '#1d4ed8' : '#b45309'}; font-size: 11px;">
+        ${it.item_type === 'LABOR' ? 'أجور يد / خدمة' : 'قطع غيار'}
+      </td>
+      <td style="padding: 9px 8px; border-bottom: 1px solid #e2e8f0; text-align: right; font-weight: 600; color: #0f172a;">${escapeHtml(it.description)}</td>
+      <td style="padding: 9px 8px; border-bottom: 1px solid #e2e8f0; text-align: center; font-family: monospace;">${it.quantity} ${escapeHtml(it.unit || '')}</td>
+      <td style="padding: 9px 8px; border-bottom: 1px solid #e2e8f0; text-align: left; font-family: monospace; white-space: nowrap;">${formatOMRStr(it.unit_price_baisa)}</td>
+      <td style="padding: 9px 8px; border-bottom: 1px solid #e2e8f0; text-align: left; font-family: monospace; font-weight: bold; color: #020617; white-space: nowrap;">${formatOMRStr(it.line_total_baisa)}</td>
+    </tr>
+  `).join('');
+
+  return `
+    <!DOCTYPE html>
+    <html dir="rtl" lang="ar">
+    <head>
+      <meta charset="utf-8">
+      <title>${isQuotation ? 'Quotation' : 'Invoice'} ${escapeHtml(inv.invoice_number)}</title>
+      <style>
+        @page { size: A4; margin: 12mm; }
+        body { font-family: 'Cairo', Arial, sans-serif; color: #0f172a; margin: 0; padding: 12px; font-size: 12px; line-height: 1.4; direction: rtl; }
+        .header { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #0f172a; padding-bottom: 16px; margin-bottom: 16px; }
+        .title { font-size: 20px; font-weight: 900; margin: 0; color: #020617; }
+        .subtitle { font-size: 11px; font-weight: bold; color: #475569; margin: 2px 0 0 0; }
+        .meta-box { background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 8px; padding: 10px; min-width: 230px; text-align: right; }
+        .meta-number { font-size: 16px; font-weight: 900; font-family: monospace; color: #020617; margin-top: 2px; }
+        .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px; margin-bottom: 16px; }
+        table { width: 100%; border-collapse: collapse; margin-bottom: 16px; font-size: 11px; table-layout: fixed; }
+        th { background: #f1f5f9; color: #334155; padding: 9px 8px; border-bottom: 2px solid #cbd5e1; font-weight: bold; }
+        .totals-container { display: flex; justify-content: flex-start; margin-bottom: 16px; }
+        .totals-box { width: 340px; background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 8px; padding: 12px; font-size: 12px; }
+        .totals-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px; color: #475569; }
+        .totals-final { display: flex; justify-content: space-between; align-items: center; font-size: 14px; font-weight: 900; border-top: 2px solid #020617; padding-top: 6px; margin-top: 6px; color: #020617; }
+        .footer { margin-top: 24px; border-top: 1px solid #cbd5e1; padding-top: 12px; display: flex; justify-content: space-between; font-size: 10px; color: #64748b; }
+      </style>
+    </head>
+    <body>
+      <div class="header">
+        <div>
+          <h1 class="title">الرواحي للعناية بالسيارات</h1>
+          <p class="subtitle">AL RAWAHI AUTO CARE</p>
+          <p style="margin: 4px 0 0 0; font-size: 10px; color: #475569;">مسقط، سلطنة عُمان • هاتف: 91234567 • س.ت: 1092834 • الرقم الضريبي (VAT IN): OM1100234567</p>
+        </div>
+        <div class="meta-box">
+          <div style="font-size: 11px; font-weight: bold; color: ${isQuotation ? '#d97706' : '#2563eb'};">
+            ${isQuotation ? 'عرض سعر رسمي (QUOTATION)' : 'فاتورة ضريبية رسمية (TAX INVOICE)'}
+          </div>
+          <div class="meta-number" dir="ltr">${escapeHtml(inv.invoice_number)}</div>
+          <div style="font-size: 10px; color: #475569; margin-top: 4px;">التاريخ: <b>${escapeHtml(inv.invoice_date)}</b></div>
+          <div style="font-size: 10px; color: ${isQuotation ? '#d97706' : isPaid ? '#047857' : '#b45309'}; font-weight: bold; margin-top: 2px;">
+            الحالة: ${isQuotation ? 'عرض سعر مسودة (DRAFT QUOTATION)' : isPaid ? 'مدفوعة بالكامل (PAID)' : 'مستحقة السداد (PENDING)'}
+          </div>
+        </div>
+      </div>
+
+      <div class="info-grid">
+        <div>
+          <div style="font-size: 10px; font-weight: bold; color: #64748b; margin-bottom: 4px;">بيانات العميل (Customer):</div>
+          <div style="font-size: 13px; font-weight: bold; color: #020617;">${escapeHtml(inv.customer_name || 'عميل نقدي')}</div>
+          ${inv.customer_phone ? `<div style="font-family: monospace; font-size: 11px; color: #334155;" dir="ltr">${escapeHtml(inv.customer_phone)}</div>` : ''}
+          <div style="font-size: 10px; color: #64748b; margin-top: 2px;">نوع العميل: ${inv.customer_is_permanent === 1 ? 'عميل دائم مسجل' : 'عميل زيارة فردية / مؤقت'}</div>
+        </div>
+        <div>
+          <div style="font-size: 10px; font-weight: bold; color: #64748b; margin-bottom: 4px;">بيانات المركبة (Vehicle):</div>
+          <div style="font-family: monospace; font-size: 13px; font-weight: bold; background: #020617; color: #fde047; display: inline-block; padding: 2px 8px; border-radius: 4px;">
+            ${escapeHtml(inv.vehicle_plate || '—')}
+          </div>
+          ${(inv.vehicle_make || inv.vehicle_model) ? `<div style="font-size: 11px; color: #334155; margin-top: 4px;">${escapeHtml([inv.vehicle_make, inv.vehicle_model, inv.vehicle_year].filter(Boolean).join(' '))}</div>` : ''}
+          ${inv.vehicle_vin ? `<div style="font-size: 11px; font-family: monospace; font-weight: bold; color: #020617; margin-top: 4px;">رقم الشاصي (VIN): <span dir="ltr">${escapeHtml(inv.vehicle_vin)}</span></div>` : ''}
+          ${inv.notes ? `<div style="font-size: 10px; color: #64748b; margin-top: 2px;">ملاحظات: ${escapeHtml(inv.notes)}</div>` : ''}
+        </div>
+      </div>
+
+      <table>
+        <thead>
+          <tr>
+            <th style="width: 5%; text-align: center;">#</th>
+            <th style="width: 14%; text-align: center;">النوع</th>
+            <th style="width: 41%; text-align: right;">البيان / الخدمة / الصنف</th>
+            <th style="width: 14%; text-align: center;">الكمية والوحدة</th>
+            <th style="width: 13%; text-align: left;">سعر الوحدة</th>
+            <th style="width: 13%; text-align: left;">الإجمالي</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rowsHtml}
+        </tbody>
+      </table>
+
+      <div class="totals-container">
+        <div class="totals-box">
+          <div class="totals-row">
+            <span>إجمالي قطع الغيار والمواد:</span>
+            <span style="font-family: monospace; font-weight: bold;">${formatOMRStr(inv.subtotal_parts_baisa)}</span>
+          </div>
+          <div class="totals-row">
+            <span>إجمالي أجور اليد والخدمات:</span>
+            <span style="font-family: monospace; font-weight: bold;">${formatOMRStr(inv.subtotal_labor_baisa)}</span>
+          </div>
+          ${inv.discount_baisa > 0 ? `
+            <div class="totals-row" style="color: #047857; font-weight: bold;">
+              <span>الخصم الممنوح:</span>
+              <span style="font-family: monospace;">- ${formatOMRStr(inv.discount_baisa)}</span>
+            </div>
+          ` : ''}
+          <div class="totals-row" style="border-top: 1px solid #cbd5e1; padding-top: 4px; font-weight: bold; color: #0f172a; background: #e2e8f0; padding: 4px; border-radius: 4px;">
+            <span>السعر قبل الضريبة (المجموع الخالي من الضريبة):</span>
+            <span style="font-family: monospace;">${formatOMRStr(Math.max(0, inv.subtotal_parts_baisa + inv.subtotal_labor_baisa - (inv.discount_baisa || 0)))}</span>
+          </div>
+          <div class="totals-row" style="padding-top: 4px;">
+            <span>ضريبة القيمة المضافة (${inv.tax_rate_percent}% VAT):</span>
+            <span style="font-family: monospace; font-weight: bold;">${formatOMRStr(inv.tax_amount_baisa)}</span>
+          </div>
+          <div class="totals-final">
+            <span>${isQuotation ? 'المجموع الإجمالي لعرض السعر:' : 'المجموع شامل الضريبة (Grand Total):'}</span>
+            <span style="font-family: monospace; color: #b45309;">${formatOMRStr(inv.grand_total_baisa)}</span>
+          </div>
+          ${!isQuotation ? `
+            <div class="totals-row" style="border-top: 1px solid #e2e8f0; padding-top: 4px; color: #047857;">
+              <span>المدفوع:</span>
+              <span style="font-family: monospace; font-weight: bold;">${formatOMRStr(inv.paid_amount_baisa)}</span>
+            </div>
+            <div class="totals-row" style="font-weight: bold; color: ${inv.balance_due_baisa > 0 ? '#b91c1c' : '#047857'};">
+              <span>المتبقي:</span>
+              <span style="font-family: monospace;">${formatOMRStr(inv.balance_due_baisa)}</span>
+            </div>
+          ` : ''}
+        </div>
+      </div>
+
+      <div class="footer">
+        <div>
+          <p style="margin: 0; font-weight: bold;">شكرًا لاختياركم الرواحي للعناية بالسيارات.</p>
+          <p style="margin: 2px 0 0 0;">${isQuotation ? 'عرض السعر سارٍ لمدة 15 يوماً من تاريخ الإصدار ويخضع لتوافر قطع الغيار.' : 'الضمان يسري وفق الشروط المدونة في أمر الإصلاح. لا تُقبل أي مطالبات بدون إبراز أصل الفاتورة.'}</p>
+        </div>
+        <div style="text-align: center;">
+          <div style="width: 140px; border-bottom: 1px dashed #94a3b8; height: 35px; margin-bottom: 4px;"></div>
+          <span>${isQuotation ? 'اعتماد العميل / المشرف' : 'توقيع المستلم / المحاسب'}</span>
+        </div>
+      </div>
+    </body>
+    </html>
+  `;
 }

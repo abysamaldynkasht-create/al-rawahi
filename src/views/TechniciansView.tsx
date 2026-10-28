@@ -54,11 +54,11 @@ import type {
 
 type ActiveTab = 'workers' | 'overtime' | 'payroll' | 'productivity';
 
-export function TechniciansView({ onNavigate: _onNavigate }: { onNavigate?: (route: RouteId) => void }) {
+export function TechniciansView({ onNavigate: _onNavigate, initialTab }: { onNavigate?: (route: RouteId) => void; initialTab?: ActiveTab }) {
   const { lang, isRtl } = useLanguage();
   const isAr = lang === 'ar';
 
-  const [activeTab, setActiveTab] = useState<ActiveTab>('workers');
+  const [activeTab, setActiveTab] = useState<ActiveTab>(initialTab || 'workers');
   const [isLoading, setIsLoading] = useState(false);
 
   // Workers Data
@@ -72,6 +72,7 @@ export function TechniciansView({ onNavigate: _onNavigate }: { onNavigate?: (rou
   const [selectedMonth, setSelectedMonth] = useState<string>(() => new Date().toISOString().slice(0, 7));
   const [otWorkerFilter, setOtWorkerFilter] = useState<string>('');
   const [isOtModalOpen, setIsOtModalOpen] = useState(false);
+  const [editingOtEntry, setEditingOtEntry] = useState<WorkerOvertimeEntryDTO | null>(null);
 
   // Payroll Data
   const [payrollMonth, setPayrollMonth] = useState<string>(() => new Date().toISOString().slice(0, 7));
@@ -683,34 +684,48 @@ export function TechniciansView({ onNavigate: _onNavigate }: { onNavigate?: (rou
           </div>
 
           {/* Filters Bar */}
-          <div className="bg-slate-900/60 p-3 rounded-2xl border border-slate-800 flex flex-wrap items-center gap-3 text-xs">
-            <div className="flex items-center gap-2">
-              <Calendar className="w-4 h-4 text-amber-400" />
-              <span className="text-slate-400">{isAr ? 'شهر الاستحقاق:' : 'Month:'}</span>
-              <Input
-                type="month"
-                value={selectedMonth}
-                onChange={(e) => setSelectedMonth(e.target.value)}
-                className="w-36 text-xs h-8 bg-slate-800 border-slate-700"
-              />
+          <div className="bg-slate-900/60 p-3 rounded-2xl border border-slate-800 flex flex-wrap items-center justify-between gap-3 text-xs">
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="flex items-center gap-2">
+                <Calendar className="w-4 h-4 text-amber-400" />
+                <span className="text-slate-400">{isAr ? 'شهر الاستحقاق:' : 'Month:'}</span>
+                <Input
+                  type="month"
+                  value={selectedMonth}
+                  onChange={(e) => setSelectedMonth(e.target.value)}
+                  className="w-36 text-xs h-8 bg-slate-800 border-slate-700"
+                />
+              </div>
+
+              <div className="flex items-center gap-2">
+                <User className="w-4 h-4 text-amber-400" />
+                <span className="text-slate-400">{isAr ? 'تصفية بالعامل:' : 'Worker:'}</span>
+                <select
+                  value={otWorkerFilter}
+                  onChange={(e) => setOtWorkerFilter(e.target.value)}
+                  className="bg-slate-800 border border-slate-700 rounded-lg px-2.5 py-1 text-xs text-slate-200 h-8"
+                >
+                  <option value="">{isAr ? 'جميع العمال' : 'All Workers'}</option>
+                  {workers.map((w) => (
+                    <option key={w.id} value={w.id}>
+                      {w.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
 
-            <div className="flex items-center gap-2">
-              <User className="w-4 h-4 text-amber-400" />
-              <span className="text-slate-400">{isAr ? 'تصفية بالعامل:' : 'Worker:'}</span>
-              <select
-                value={otWorkerFilter}
-                onChange={(e) => setOtWorkerFilter(e.target.value)}
-                className="bg-slate-800 border border-slate-700 rounded-lg px-2.5 py-1 text-xs text-slate-200 h-8"
-              >
-                <option value="">{isAr ? 'جميع العمال' : 'All Workers'}</option>
-                {workers.map((w) => (
-                  <option key={w.id} value={w.id}>
-                    {w.name}
-                  </option>
-                ))}
-              </select>
-            </div>
+            <Button
+              variant="gold"
+              size="sm"
+              onClick={() => {
+                setEditingOtEntry(null);
+                setIsOtModalOpen(true);
+              }}
+              icon={<Plus className="w-3.5 h-3.5" />}
+            >
+              {isAr ? 'تسجيل ساعات عمل إضافية' : 'Log Overtime Hours'}
+            </Button>
           </div>
 
           {/* Overtime Entries Table */}
@@ -775,6 +790,17 @@ export function TechniciansView({ onNavigate: _onNavigate }: { onNavigate?: (rou
                         </td>
                         <td className="py-3 px-4">
                           <div className="flex items-center justify-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEditingOtEntry(e);
+                                setIsOtModalOpen(true);
+                              }}
+                              title={isAr ? 'تعديل السجل' : 'Edit Entry'}
+                              className="p-1 rounded-lg text-amber-400 hover:text-amber-300 hover:bg-amber-500/20"
+                            >
+                              <Edit2 className="w-3.5 h-3.5" />
+                            </button>
                             {e.status === 'PENDING' && (
                               <>
                                 <button
@@ -1105,15 +1131,27 @@ export function TechniciansView({ onNavigate: _onNavigate }: { onNavigate?: (rou
       <OvertimeModal
         isOpen={isOtModalOpen}
         workers={workers}
-        onClose={() => setIsOtModalOpen(false)}
+        editingEntry={editingOtEntry}
+        onClose={() => {
+          setIsOtModalOpen(false);
+          setEditingOtEntry(null);
+        }}
         onSave={async (input) => {
-          const res = await garageApi.addWorkerOvertime(input);
+          const res = editingOtEntry
+            ? await garageApi.updateWorkerOvertime(editingOtEntry.id, input)
+            : await garageApi.addWorkerOvertime(input);
           if (res.success) {
-            showFeedback('success', isAr ? 'تم تسجيل ساعات العمل الإضافي بنجاح' : 'Overtime logged successfully');
+            showFeedback(
+              'success',
+              editingOtEntry
+                ? (isAr ? 'تم تعديل ساعات العمل الإضافي بنجاح' : 'Overtime updated successfully')
+                : (isAr ? 'تم تسجيل ساعات العمل الإضافي بنجاح' : 'Overtime logged successfully')
+            );
             loadOvertime();
+            setEditingOtEntry(null);
             return true;
           } else {
-            showFeedback('error', res.error || 'Failed to log overtime');
+            showFeedback('error', res.error || (isAr ? 'فشل حفظ ساعات العمل الإضافي' : 'Failed to save overtime'));
             return false;
           }
         }}

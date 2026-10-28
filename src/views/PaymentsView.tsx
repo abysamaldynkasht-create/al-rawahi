@@ -31,7 +31,7 @@ import { Button } from '../components/ui/Button.tsx';
 import { Badge } from '../components/ui/Badge.tsx';
 import { garageApi } from '../services/garageClient.ts';
 import type { PaymentDTO, InvoiceDTO, PaymentMethod } from '../types/ipc.ts';
-import { formatOMR } from '../core/currency.ts';
+import { formatOMR, formatBaisa } from '../core/currency.ts';
 
 export function PaymentsView({ onNavigate }: { onNavigate?: (route: any) => void }) {
   const { lang, t } = useLanguage();
@@ -161,9 +161,9 @@ export function PaymentsView({ onNavigate }: { onNavigate?: (route: any) => void
   function getMethodBadge(method: PaymentMethod) {
     switch (method) {
       case 'CASH':
-        return <Badge variant="emerald" size="sm">{isAr ? 'نقداً (Cash)' : 'Cash'}</Badge>;
+        return <Badge variant="emerald" size="sm">{isAr ? 'نقداً (كاش)' : 'Cash'}</Badge>;
       case 'CARD_RECORDED':
-        return <Badge variant="gold" size="sm">{isAr ? 'بطاقة بنكية (Card)' : 'Card'}</Badge>;
+        return <Badge variant="gold" size="sm">{isAr ? 'بطاقة (فيزا / مدى)' : 'Card (Visa / Mada)'}</Badge>;
       case 'BANK_TRANSFER':
         return <Badge variant="sky" size="sm">{isAr ? 'تحويل بنكي' : 'Bank Transfer'}</Badge>;
       default:
@@ -464,9 +464,9 @@ export function PaymentsView({ onNavigate }: { onNavigate?: (route: any) => void
                     onChange={(e) => setPaymentMethod(e.target.value as PaymentMethod)}
                     className="w-full px-3 py-2 bg-[#0d131f] border border-[#223048] rounded-lg text-white focus:outline-none focus:border-amber-500"
                   >
-                    <option value="CASH">{isAr ? 'نقداً (Cash)' : 'Cash'}</option>
-                    <option value="CARD_RECORDED">{isAr ? 'بطاقة بنكية (Card)' : 'Card'}</option>
-                    <option value="BANK_TRANSFER">{isAr ? 'تحويل بنكي' : 'Bank Transfer'}</option>
+                    <option value="CASH">{isAr ? 'نقداً (كاش / Cash)' : 'Cash'}</option>
+                    <option value="CARD_RECORDED">{isAr ? 'بطاقة (فيزا / مدى / Card)' : 'Card (Visa / Mada)'}</option>
+                    <option value="BANK_TRANSFER">{isAr ? 'تحويل بنكي (Bank Transfer)' : 'Bank Transfer'}</option>
                   </select>
                 </div>
               </div>
@@ -529,8 +529,8 @@ export function PaymentsView({ onNavigate }: { onNavigate?: (route: any) => void
           <div className="bg-white text-slate-900 rounded-xl max-w-md w-full p-6 space-y-4 shadow-2xl font-sans">
             {/* Header */}
             <div className="text-center pb-3 border-b-2 border-slate-900">
-              <h2 className="text-lg font-black tracking-tight">AL RAWAHI GARAGE</h2>
-              <p className="text-xs text-slate-600 font-semibold">كراج الرواحي لصيانة المركبات</p>
+              <h2 className="text-lg font-black tracking-tight">AL RAWAHI AUTO CARE</h2>
+              <p className="text-xs text-slate-600 font-semibold">الرواحي للعناية بالسيارات</p>
               <div className="flex items-center justify-center gap-2 text-[10px] text-slate-500 mt-1 font-mono">
                 <span>CR: 1498231</span>
                 <span>•</span>

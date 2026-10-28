@@ -827,6 +827,7 @@ class BrowserMockAdapter implements GarageApi {
       odometer: input.odometer,
       color: input.color?.trim() || undefined,
       notes: input.notes?.trim() || undefined,
+      isPermanent: input.isPermanent !== false,
       isActive: input.isActive !== false,
       createdAt: now,
       updatedAt: now,
@@ -1527,6 +1528,10 @@ class BrowserMockAdapter implements GarageApi {
       isCustomerPermanent: cust ? cust.isPermanent !== false : true,
       vehicleId: ro.vehicleId,
       vehiclePlate: veh?.plateNumber || ro.vehiclePlate,
+      vehicleVin: veh?.vin,
+      vehicleMake: veh?.make,
+      vehicleModel: veh?.model,
+      vehicleYear: veh?.year,
       invoiceDate,
       status: 'ISSUED',
       subtotalPartsBaisa: subtotalParts,
@@ -2293,6 +2298,8 @@ class BrowserMockAdapter implements GarageApi {
     const invoices = this.getStorage<InvoiceDTO[]>('invoices', []);
     const customers = this.getStorage<CustomerDTO[]>('customers', []);
     const vehicles = this.getStorage<VehicleDTO[]>('vehicles', []);
+    const inventory = this.getStorage<InventoryItemDTO[]>('inventory', []);
+    const movements = this.getStorage<InventoryMovementDTO[]>('inventory_movements', []);
 
     const cust = customers.find((c) => c.id === input.customerId);
     const veh = input.vehicleId ? vehicles.find((v) => v.id === input.vehicleId) : undefined;
@@ -2302,8 +2309,59 @@ class BrowserMockAdapter implements GarageApi {
     const invoiceDate = now.toISOString().slice(0, 10);
     const invoiceNumber = `INV-${invoiceDate.replace(/-/g, '')}-${Math.floor(1000 + Math.random() * 9000)}`;
 
-    const subtotalParts = input.subtotalPartsBaisa || 0;
-    const subtotalLabor = input.subtotalLaborBaisa || 0;
+    let subtotalParts = input.subtotalPartsBaisa || 0;
+    let subtotalLabor = input.subtotalLaborBaisa || 0;
+
+    const createdItems: InvoiceItemDTO[] = [];
+    if (input.items && input.items.length > 0) {
+      let calcParts = 0;
+      let calcLabor = 0;
+      for (const it of input.items) {
+        if (it.itemType === 'PART') calcParts += it.lineTotalBaisa;
+        else if (it.itemType === 'LABOR') calcLabor += it.lineTotalBaisa;
+        const itemId = `it-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+        const unit = it.unit || (it.itemType === 'LABOR' ? 'خدمة' : 'قطعة');
+        createdItems.push({
+          id: itemId,
+          invoiceId: id,
+          itemType: it.itemType,
+          sourceId: it.sourceId,
+          description: it.description,
+          quantity: it.quantity,
+          unit,
+          unitPriceBaisa: it.unitPriceBaisa,
+          costPriceBaisa: it.costPriceBaisa || 0,
+          lineTotalBaisa: it.lineTotalBaisa,
+        });
+
+        // Deduct inventory stock if item is from inventory and not draft quotation
+        if (input.status !== 'DRAFT' && it.itemType === 'PART' && it.sourceId && !input.repairOrderId) {
+          const invItem = inventory.find((x) => x.id === it.sourceId);
+          if (invItem) {
+            invItem.quantityInStock = Math.max(0, invItem.quantityInStock - it.quantity);
+            movements.unshift({
+              id: `mov-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+              itemId: invItem.id,
+              itemName: invItem.name,
+              partCode: invItem.partCode,
+              movementType: 'RO_ISSUE',
+              quantityDelta: -it.quantity,
+              unitCostBaisa: invItem.purchaseCostBaisa,
+              referenceType: 'REPAIR_ORDER',
+              referenceId: id,
+              reason: `Invoice sale: ${invoiceNumber} (${it.description})`,
+              createdBy: 'Operator',
+              createdAt: now.toISOString(),
+            });
+          }
+        }
+      }
+      if (subtotalParts === 0) subtotalParts = calcParts;
+      if (subtotalLabor === 0) subtotalLabor = calcLabor;
+      this.setStorage('inventory', inventory);
+      this.setStorage('inventory_movements', movements);
+    }
+
     const discount = input.discountBaisa || 0;
     const taxRate = input.taxRatePercent ?? 5.0;
     const taxableBase = Math.max(0, subtotalParts + subtotalLabor - discount);
@@ -2322,8 +2380,12 @@ class BrowserMockAdapter implements GarageApi {
       isCustomerPermanent: cust ? cust.isPermanent !== false : true,
       vehicleId: input.vehicleId,
       vehiclePlate: veh?.plateNumber,
+      vehicleVin: veh?.vin,
+      vehicleMake: veh?.make,
+      vehicleModel: veh?.model,
+      vehicleYear: veh?.year,
       invoiceDate,
-      status: 'ISSUED',
+      status: input.status || 'ISSUED',
       subtotalPartsBaisa: subtotalParts,
       subtotalLaborBaisa: subtotalLabor,
       discountBaisa: discount,
@@ -2335,13 +2397,99 @@ class BrowserMockAdapter implements GarageApi {
       invoiceLanguage: input.invoiceLanguage || 'ar',
       retentionPrompted: false,
       notes: input.notes,
+      items: createdItems.length > 0 ? createdItems : undefined,
       createdAt: now.toISOString(),
     };
 
     invoices.unshift(newInvoice);
     this.setStorage('invoices', invoices);
 
+    if (input.status !== 'DRAFT' && input.repairOrderId) {
+      const ros = this.getStorage<RepairOrderDTO[]>('repair_orders', []);
+      const ro = ros.find((r) => r.id === input.repairOrderId);
+      if (ro) {
+        ro.status = 'COMPLETED';
+        ro.completedAt = now.toISOString();
+        this.setStorage('repair_orders', ros);
+      }
+    }
+
     return { success: true, data: newInvoice };
+  }
+
+  async updateInvoice(
+    id: string,
+    input: Partial<InvoiceInput> & { status?: 'DRAFT' | 'ISSUED' | 'PARTIALLY_PAID' | 'PAID' | 'CANCELLED' }
+  ): Promise<IpcResult<InvoiceDTO>> {
+    const invoices = this.getStorage<InvoiceDTO[]>('invoices', []);
+    const index = invoices.findIndex((i) => i.id === id);
+    if (index === -1) {
+      return { success: false, error: 'Invoice or quotation not found' };
+    }
+
+    const existing = invoices[index];
+    let subtotalParts = 0;
+    let subtotalLabor = 0;
+    const updatedItems: InvoiceItemDTO[] = [];
+
+    if (input.items && input.items.length > 0) {
+      for (const it of input.items) {
+        if (it.itemType === 'PART') subtotalParts += it.lineTotalBaisa;
+        else if (it.itemType === 'LABOR') subtotalLabor += it.lineTotalBaisa;
+        updatedItems.push({
+          id: `it-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+          invoiceId: id,
+          itemType: it.itemType,
+          sourceId: it.sourceId,
+          description: it.description,
+          quantity: it.quantity,
+          unit: it.unit || (it.itemType === 'LABOR' ? 'خدمة' : 'قطعة'),
+          unitPriceBaisa: it.unitPriceBaisa,
+          costPriceBaisa: it.costPriceBaisa || 0,
+          lineTotalBaisa: it.lineTotalBaisa,
+        });
+      }
+    } else if (existing.items) {
+      subtotalParts = existing.subtotalPartsBaisa;
+      subtotalLabor = existing.subtotalLaborBaisa;
+      updatedItems.push(...existing.items);
+    }
+
+    const discount = input.discountBaisa !== undefined ? input.discountBaisa : existing.discountBaisa;
+    const taxRate = input.taxRatePercent !== undefined ? input.taxRatePercent : existing.taxRatePercent;
+    const taxableBase = Math.max(0, subtotalParts + subtotalLabor - discount);
+    const taxAmount = Math.round((taxableBase * taxRate) / 100);
+    const grandTotal = taxableBase + taxAmount;
+    const paidAmount = existing.paidAmountBaisa || 0;
+    const balanceDue = Math.max(0, grandTotal - paidAmount);
+
+    let nextStatus = input.status || existing.status;
+    if (paidAmount >= grandTotal && grandTotal > 0 && nextStatus !== 'DRAFT') {
+      nextStatus = 'PAID';
+    } else if (paidAmount > 0 && paidAmount < grandTotal && nextStatus !== 'DRAFT') {
+      nextStatus = 'PARTIALLY_PAID';
+    }
+
+    const updatedInvoice: InvoiceDTO = {
+      ...existing,
+      status: nextStatus,
+      subtotalPartsBaisa: subtotalParts,
+      subtotalLaborBaisa: subtotalLabor,
+      discountBaisa: discount,
+      taxRatePercent: taxRate,
+      taxAmountBaisa: taxAmount,
+      grandTotalBaisa: grandTotal,
+      paidAmountBaisa: paidAmount,
+      balanceDueBaisa: balanceDue,
+      notes: input.notes !== undefined ? input.notes : existing.notes,
+      invoiceLanguage: input.invoiceLanguage || existing.invoiceLanguage || 'ar',
+      items: updatedItems.length > 0 ? updatedItems : existing.items,
+    };
+
+    invoices[index] = updatedInvoice;
+    this.setStorage('invoices', invoices);
+
+    return { success: true, data: updatedInvoice };
   }
 
   async recordPayment(input: PaymentInput): Promise<IpcResult<PaymentResult>> {
@@ -2708,10 +2856,25 @@ class BrowserMockAdapter implements GarageApi {
   ): Promise<IpcResult<PrintResult>> {
     const invoices = this.getStorage<InvoiceDTO[]>('invoices', []);
     const inv = invoices.find((i) => i.id === invoiceId);
-    if (inv) {
-      inv.printedAt = new Date().toISOString();
-      this.setStorage('invoices', invoices);
+    if (!inv) {
+      return { success: false, error: 'الفاتورة غير موجودة أو تم حذفها' };
     }
+
+    const settings = this.getStorage<Record<string, string>>('settings', {});
+    const targetPrinter = settings.default_printer?.trim();
+    if (targetPrinter) {
+      const printersRes = await this.getPrinters();
+      const printers = printersRes.data || [];
+      if (printers.length > 0 && !printers.some((p) => p.name === targetPrinter)) {
+        return {
+          success: false,
+          error: `الطابعة المحددة "${targetPrinter}" غير متصلة أو غير متاحة. يرجى التحقق من إعدادات الطابعات.`,
+        };
+      }
+    }
+
+    inv.printedAt = new Date().toISOString();
+    this.setStorage('invoices', invoices);
 
     const eligibility = await this.checkRetentionEligibility(invoiceId);
 
@@ -2805,15 +2968,6 @@ class BrowserMockAdapter implements GarageApi {
 
   async testPrint(_printerName?: string): Promise<IpcResult<void>> {
     return { success: true };
-  }
-
-  async exportInvoicePdf(invoiceId: string, _language: 'ar' | 'en'): Promise<IpcResult<{ filePath: string }>> {
-    return {
-      success: true,
-      data: {
-        filePath: `C:\\Users\\User\\AppData\\Roaming\\al-rawahi-garage\\Invoice_${invoiceId.slice(0, 8)}.pdf`,
-      },
-    };
   }
 }
 

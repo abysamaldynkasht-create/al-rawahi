@@ -20,14 +20,15 @@ import { Modal } from '../ui/Modal.tsx';
 import { Button } from '../ui/Button.tsx';
 import { Input } from '../ui/Input.tsx';
 import { toBaisa, fromBaisa, formatBaisa } from '../../core/currency.ts';
-import type { TechnicianDTO, WorkerOvertimeInput } from '../../types/ipc.ts';
+import type { TechnicianDTO, WorkerOvertimeInput, WorkerOvertimeEntryDTO } from '../../types/ipc.ts';
 
 interface OvertimeModalProps {
   isOpen: boolean;
   workers: TechnicianDTO[];
   preselectedWorkerId?: string;
+  editingEntry?: WorkerOvertimeEntryDTO | null;
   onClose: () => void;
-  onSave: (input: WorkerOvertimeInput) => Promise<boolean>;
+  onSave: (input: WorkerOvertimeInput, editingId?: string) => Promise<boolean>;
   isAr: boolean;
 }
 
@@ -35,6 +36,7 @@ export function OvertimeModal({
   isOpen,
   workers,
   preselectedWorkerId,
+  editingEntry,
   onClose,
   onSave,
   isAr,
@@ -49,25 +51,34 @@ export function OvertimeModal({
 
   useEffect(() => {
     if (isOpen) {
-      const activeWorkers = workers.filter((w) => w.isActive);
-      const initialId = preselectedWorkerId || (activeWorkers[0] ? activeWorkers[0].id : '');
-      setWorkerId(initialId);
-      setWorkDate(new Date().toISOString().slice(0, 10));
-      setHours('2.0');
-      setNotes('');
-      setError(null);
+      if (editingEntry) {
+        setWorkerId(editingEntry.workerId);
+        setWorkDate(editingEntry.workDate);
+        setHours(editingEntry.hours.toString());
+        setCustomRateOmr(fromBaisa(editingEntry.hourlyRateBaisa).toFixed(3));
+        setNotes(editingEntry.notes || '');
+        setError(null);
+      } else {
+        const activeWorkers = workers.filter((w) => w.isActive);
+        const initialId = preselectedWorkerId || (activeWorkers[0] ? activeWorkers[0].id : '');
+        setWorkerId(initialId);
+        setWorkDate(new Date().toISOString().slice(0, 10));
+        setHours('2.0');
+        setNotes('');
+        setError(null);
 
-      const target = workers.find((w) => w.id === initialId);
-      if (target) {
-        setCustomRateOmr(fromBaisa(target.overtimeRateBaisa || 2500).toFixed(3));
+        const target = workers.find((w) => w.id === initialId);
+        if (target) {
+          setCustomRateOmr(fromBaisa(target.overtimeRateBaisa || 2500).toFixed(3));
+        }
       }
     }
-  }, [isOpen, workers, preselectedWorkerId]);
+  }, [isOpen, workers, preselectedWorkerId, editingEntry]);
 
   const handleWorkerChange = (id: string) => {
     setWorkerId(id);
     const target = workers.find((w) => w.id === id);
-    if (target) {
+    if (target && !editingEntry) {
       setCustomRateOmr(fromBaisa(target.overtimeRateBaisa || 2500).toFixed(3));
     }
   };
@@ -103,7 +114,7 @@ export function OvertimeModal({
       notes: notes.trim() || undefined,
     };
 
-    const ok = await onSave(payload);
+    const ok = await onSave(payload, editingEntry ? editingEntry.id : undefined);
     setIsSubmitting(false);
     if (ok) {
       onClose();
@@ -114,7 +125,15 @@ export function OvertimeModal({
     <Modal
       isOpen={isOpen}
       onClose={onClose}
-      title={isAr ? 'تسجيل ساعات عمل إضافية' : 'Log Worker Overtime'}
+      title={
+        editingEntry
+          ? isAr
+            ? 'تعديل ساعات العمل الإضافي'
+            : 'Edit Overtime Entry'
+          : isAr
+          ? 'تسجيل ساعات عمل إضافية'
+          : 'Log Worker Overtime'
+      }
       maxWidth="md"
       footer={
         <div className="flex items-center justify-end gap-2 w-full">
@@ -128,7 +147,17 @@ export function OvertimeModal({
             disabled={isSubmitting}
             icon={isSubmitting ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
           >
-            {isSubmitting ? (isAr ? 'جاري التسجيل...' : 'Saving...') : (isAr ? 'تسجيل واعتماد الساعات' : 'Confirm Overtime')}
+            {isSubmitting
+              ? isAr
+                ? 'جاري الحفظ...'
+                : 'Saving...'
+              : editingEntry
+              ? isAr
+                ? 'حفظ التعديلات'
+                : 'Save Changes'
+              : isAr
+              ? 'تسجيل واعتماد الساعات'
+              : 'Confirm Overtime'}
           </Button>
         </div>
       }

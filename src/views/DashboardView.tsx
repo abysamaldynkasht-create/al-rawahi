@@ -34,7 +34,7 @@ import { garageApi, isDesktopRuntime } from '../services/garageClient.ts';
 import type { CustomerDTO, VehicleDTO, RepairOrderDTO, FinancialReportDTO } from '../types/ipc.ts';
 import { formatOMR, fromBaisa } from '../core/currency.ts';
 
-export function DashboardView({ onNavigate }: { onNavigate: (route: RouteId) => void }) {
+export function DashboardView({ onNavigate }: { onNavigate: (route: RouteId, subTab?: string) => void }) {
   const { lang, t } = useLanguage();
   const isAr = lang === 'ar';
   const isDesktop = isDesktopRuntime();
@@ -110,6 +110,14 @@ export function DashboardView({ onNavigate }: { onNavigate: (route: RouteId) => 
         </div>
 
         <div className="hidden sm:flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => onNavigate('technicians', 'overtime')}
+            icon={<Clock className="w-3.5 h-3.5 text-amber-400" />}
+          >
+            {isAr ? 'ساعات العمل الإضافي' : 'Overtime Hours'}
+          </Button>
           <Button
             variant="gold"
             size="sm"
@@ -377,6 +385,19 @@ export function DashboardView({ onNavigate }: { onNavigate: (route: RouteId) => 
             <div className="text-start">
               <div className="font-bold text-white text-xs">{isAr ? 'الفنيون والورشة' : 'Technicians'}</div>
               <div className="text-[10px] text-slate-400">{isAr ? 'الأجور والمهام' : 'Staff & Labor Rates'}</div>
+            </div>
+          </Button>
+
+          <Button
+            variant="secondary"
+            size="md"
+            className="justify-between h-auto py-3.5 px-4 border-amber-500/20 hover:border-amber-500/40"
+            onClick={() => onNavigate('technicians', 'overtime')}
+            icon={<Clock className="w-4 h-4 text-amber-400" />}
+          >
+            <div className="text-start">
+              <div className="font-bold text-white text-xs">{isAr ? 'ساعات العمل الإضافي' : 'Overtime Hours'}</div>
+              <div className="text-[10px] text-slate-400">{isAr ? 'تسجيل واحتساب أجر الساعات' : 'Log & Calculate Overtime'}</div>
             </div>
           </Button>
 

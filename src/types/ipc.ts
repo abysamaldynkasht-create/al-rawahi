@@ -332,6 +332,7 @@ export interface WorkerOvertimeUpdateInput {
   hourlyRateBaisa?: number;
   notes?: string;
   status?: 'PENDING' | 'APPROVED' | 'REJECTED';
+  approvedBy?: string;
 }
 
 export interface WorkerMonthlyPayrollDTO {
@@ -521,6 +522,10 @@ export interface InvoiceDTO {
   isCustomerPermanent?: boolean;
   vehicleId?: string;
   vehiclePlate?: string;
+  vehicleVin?: string;
+  vehicleMake?: string;
+  vehicleModel?: string;
+  vehicleYear?: number;
   invoiceDate: string;
   status: 'DRAFT' | 'ISSUED' | 'PARTIALLY_PAID' | 'PAID' | 'CANCELLED';
   subtotalPartsBaisa: number;
@@ -539,16 +544,39 @@ export interface InvoiceDTO {
   createdAt: string;
 }
 
+export interface InvoiceItemInput {
+  itemType: 'PART' | 'LABOR';
+  sourceId?: string;
+  description: string;
+  quantity: number;
+  unit?: string;
+  unitPriceBaisa: number;
+  costPriceBaisa?: number;
+  lineTotalBaisa: number;
+}
+
 export interface InvoiceInput {
   customerId: string;
   vehicleId?: string;
   repairOrderId?: string;
+  status?: 'DRAFT' | 'ISSUED' | 'PARTIALLY_PAID' | 'PAID' | 'CANCELLED';
   subtotalPartsBaisa?: number;
   subtotalLaborBaisa?: number;
   discountBaisa?: number;
   taxRatePercent?: number;
   notes?: string;
   invoiceLanguage?: 'ar' | 'en';
+  items?: InvoiceItemInput[];
+}
+
+export interface InvoiceUpdateInput {
+  id: string;
+  status?: 'DRAFT' | 'ISSUED' | 'PARTIALLY_PAID' | 'PAID' | 'CANCELLED';
+  discountBaisa?: number;
+  taxRatePercent?: number;
+  notes?: string;
+  invoiceLanguage?: 'ar' | 'en';
+  items?: InvoiceItemInput[];
 }
 
 export interface PaymentInput {
@@ -817,6 +845,7 @@ export interface GarageApi {
   getInvoices(customerId?: string): Promise<IpcResult<InvoiceDTO[]>>;
   getInvoiceById(id: string): Promise<IpcResult<InvoiceDTO | null>>;
   createInvoice(input: InvoiceInput): Promise<IpcResult<InvoiceDTO>>;
+  updateInvoice(id: string, input: Partial<InvoiceInput> & { status?: 'DRAFT' | 'ISSUED' | 'PARTIALLY_PAID' | 'PAID' | 'CANCELLED' }): Promise<IpcResult<InvoiceDTO>>;
   getPayments(invoiceId?: string): Promise<IpcResult<PaymentDTO[]>>;
   getPaymentById(id: string): Promise<IpcResult<PaymentDTO | null>>;
   recordPayment(input: PaymentInput): Promise<IpcResult<PaymentResult>>;

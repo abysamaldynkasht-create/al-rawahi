@@ -5,14 +5,18 @@
  * 
  * Register New Maintenance Operation View
  * 
- * Core Workflows:
- * - Customer Autocomplete Search with Phone Disambiguation
- * - Explicit Customer Saving (No typing auto-save)
- * - Vehicle Selection / Inline Registration with Omani Plate Validation
- * - Labor & Services Addition with Technician Assignment
- * - Real Spare Parts Allocation from Inventory with Stock Verification
- * - Live Itemized Cost Breakdown in Integer Baisa
- * - Explicit Creation of Repair Order
+ * Key Capabilities:
+ * - Real-time Customer Recognition & Autocomplete (partial name / phone matching)
+ * - Optional Customer & Vehicle Saving: users can proceed as temporary / one-time customer
+ *   without being forced to register them permanently (with optional "حفظ كعميل دائم" checkbox)
+ * - Vehicle Selection or Temporary Vehicle entry with optional permanent registration
+ * - Detailed Itemized Parts Selection from inventory with:
+ *   * Quantity
+ *   * Unit (قطعة, لتر, علبة, طقم...)
+ *   * Unit Price (OMR) with line total auto-calculation (quantity × unit price)
+ * - Choice of:
+ *   * "حفظ كأمر صيانة (Save Repair Order)"
+ *   * "إتمام العملية وإصدار الفاتورة فوراً (Complete & Issue Invoice)" with single stock deduction
  */
 
 import React, { useState, useEffect, useRef } from 'react';
@@ -30,14 +34,18 @@ import {
   Clock,
   Package,
   Layers,
+  Receipt,
   ArrowRight,
   ShieldCheck,
   RefreshCw,
   Phone,
+  FileText,
+  UserCheck,
+  Info,
 } from 'lucide-react';
 import { Card, CardContent } from '../components/ui/Card.tsx';
 import { Button } from '../components/ui/Button.tsx';
-import { Input, SearchInput } from '../components/ui/Input.tsx';
+import { Input } from '../components/ui/Input.tsx';
 import { Badge } from '../components/ui/Badge.tsx';
 import { useToast } from '../components/ui/Toast.tsx';
 import { garageApi } from '../services/garageClient.ts';
@@ -46,6 +54,7 @@ import type {
   VehicleDTO,
   TechnicianDTO,
   InventoryItemDTO,
+  InvoiceItemInput,
 } from '../types/ipc.ts';
 import { formatOMR, toBaisa, fromBaisa } from '../core/currency.ts';
 import type { RouteId } from '../i18n/translations.ts';
@@ -63,9 +72,21 @@ interface PartItem {
   partName: string;
   partCode: string;
   quantity: number;
+  unit: string;
   unitPriceOmr: string;
+  costPriceBaisa: number;
   availableStock: number;
 }
+
+const COMMON_UNITS = [
+  'قطعة',
+  'لتر',
+  'علبة',
+  'طقم',
+  'متر',
+  'كجم',
+  'جالون',
+];
 
 export function RegisterMaintenanceView({ onNavigate }: { onNavigate?: (route: RouteId) => void }) {
   const { showToast } = useToast();
@@ -77,18 +98,18 @@ export function RegisterMaintenanceView({ onNavigate }: { onNavigate?: (route: R
   const [isSearchingCustomers, setIsSearchingCustomers] = useState(false);
   const [showCustomerDropdown, setShowCustomerDropdown] = useState(false);
 
-  // New Customer Inline Form (Explicit Save Required)
-  const [isAddingNewCustomer, setIsAddingNewCustomer] = useState(false);
+  // Customer Mode: 'search' vs 'manual'
+  const [customerMode, setCustomerMode] = useState<'search' | 'manual'>('search');
   const [newCustName, setNewCustName] = useState('');
   const [newCustPhone, setNewCustPhone] = useState('');
   const [newCustAltPhone, setNewCustAltPhone] = useState('');
   const [newCustAddress, setNewCustAddress] = useState('');
-  const [isSavingCustomer, setIsSavingCustomer] = useState(false);
+  const [saveAsPermanentCustomer, setSaveAsPermanentCustomer] = useState(false);
 
-  // Vehicle Selection & Inline Form
+  // Vehicle State
   const [customerVehicles, setCustomerVehicles] = useState<VehicleDTO[]>([]);
   const [selectedVehicleId, setSelectedVehicleId] = useState('');
-  const [isAddingNewVehicle, setIsAddingNewVehicle] = useState(false);
+  const [isEnteringNewVehicle, setIsEnteringNewVehicle] = useState(false);
   const [newPlate, setNewPlate] = useState('');
   const [newMake, setNewMake] = useState('Toyota');
   const [newModel, setNewModel] = useState('');
@@ -96,7 +117,7 @@ export function RegisterMaintenanceView({ onNavigate }: { onNavigate?: (route: R
   const [newVin, setNewVin] = useState('');
   const [newOdometer, setNewOdometer] = useState('45000');
   const [newColor, setNewColor] = useState('');
-  const [isSavingVehicle, setIsSavingVehicle] = useState(false);
+  const [saveAsPermanentVehicle, setSaveAsPermanentVehicle] = useState(false);
 
   // Operation Details
   const [reportedProblem, setReportedProblem] = useState('');
@@ -112,13 +133,15 @@ export function RegisterMaintenanceView({ onNavigate }: { onNavigate?: (route: R
     { id: '1', description: 'فحص ميكانيكي وكهربائي شامل', laborChargeOmr: '10.000' },
   ]);
 
-  // Spare Parts List
+  // Spare Parts List (Itemized)
   const [allocatedParts, setAllocatedParts] = useState<PartItem[]>([]);
 
   // Catalogs
   const [technicians, setTechnicians] = useState<TechnicianDTO[]>([]);
   const [inventory, setInventory] = useState<InventoryItemDTO[]>([]);
+  const [inventorySearch, setInventorySearch] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitMode, setSubmitMode] = useState<'ro' | 'invoice' | null>(null);
 
   const autocompleteRef = useRef<HTMLDivElement>(null);
 
@@ -134,7 +157,7 @@ export function RegisterMaintenanceView({ onNavigate }: { onNavigate?: (route: R
 
   // Debounced Customer Autocomplete Search
   useEffect(() => {
-    if (selectedCustomer) return;
+    if (customerMode !== 'search' || selectedCustomer) return;
     const clean = customerQuery.trim();
     if (clean.length < 1) {
       setMatchingCustomers([]);
@@ -155,10 +178,10 @@ export function RegisterMaintenanceView({ onNavigate }: { onNavigate?: (route: R
       } finally {
         setIsSearchingCustomers(false);
       }
-    }, 250);
+    }, 200);
 
     return () => clearTimeout(timer);
-  }, [customerQuery, selectedCustomer]);
+  }, [customerQuery, selectedCustomer, customerMode]);
 
   // Load vehicles when customer is selected
   useEffect(() => {
@@ -169,9 +192,10 @@ export function RegisterMaintenanceView({ onNavigate }: { onNavigate?: (route: R
           if (res.data.length > 0) {
             setSelectedVehicleId(res.data[0].id);
             setOdometerIn(res.data[0].odometer.toString());
+            setIsEnteringNewVehicle(false);
           } else {
             setSelectedVehicleId('');
-            setIsAddingNewVehicle(true);
+            setIsEnteringNewVehicle(true);
           }
         }
       });
@@ -197,7 +221,8 @@ export function RegisterMaintenanceView({ onNavigate }: { onNavigate?: (route: R
     setSelectedCustomer(customer);
     setCustomerQuery(customer.fullName);
     setShowCustomerDropdown(false);
-    setIsAddingNewCustomer(false);
+    setCustomerMode('search');
+    setIsEnteringNewVehicle(false);
   };
 
   const handleClearCustomer = () => {
@@ -205,85 +230,17 @@ export function RegisterMaintenanceView({ onNavigate }: { onNavigate?: (route: R
     setCustomerQuery('');
     setCustomerVehicles([]);
     setSelectedVehicleId('');
+    setCustomerMode('search');
   };
 
-  // Explicitly Save New Customer
-  const handleSaveNewCustomer = async () => {
-    if (!newCustName.trim() || newCustName.trim().length < 2) {
-      showToast('يجب إدخال اسم العميل بشكل صحيح', 'error');
-      return;
+  const handleSwitchToManualCustomer = () => {
+    setSelectedCustomer(null);
+    setCustomerMode('manual');
+    setShowCustomerDropdown(false);
+    if (customerQuery.trim().length > 0 && !newCustName) {
+      setNewCustName(customerQuery.trim());
     }
-
-    setIsSavingCustomer(true);
-    try {
-      const res = await garageApi.createCustomer({
-        fullName: newCustName.trim(),
-        phone: newCustPhone.trim() || undefined,
-        altPhone: newCustAltPhone.trim() || undefined,
-        address: newCustAddress.trim() || undefined,
-        isPermanent: true,
-      });
-
-      if (res.success && res.data) {
-        showToast('تم حفظ العميل بنجاح في قاعدة البيانات', 'success');
-        setSelectedCustomer(res.data);
-        setCustomerQuery(res.data.fullName);
-        setIsAddingNewCustomer(false);
-      } else {
-        showToast(res.error || 'تعذر حفظ العميل', 'error');
-      }
-    } catch {
-      showToast('خطأ أثناء حفظ العميل', 'error');
-    } finally {
-      setIsSavingCustomer(false);
-    }
-  };
-
-  // Explicitly Save New Vehicle
-  const handleSaveNewVehicle = async () => {
-    if (!selectedCustomer) {
-      showToast('يرجى تحديد العميل أولاً لربط المركبة به', 'error');
-      return;
-    }
-    if (!newPlate.trim()) {
-      showToast('يرجى إدخال رقم اللوحة', 'error');
-      return;
-    }
-
-    setIsSavingVehicle(true);
-    try {
-      const dupCheck = await garageApi.checkVehicleDuplicates(newPlate.trim(), newVin.trim() || undefined);
-      if (dupCheck.success && dupCheck.data?.plateExists) {
-        showToast('رقم اللوحة هذا مسجل بالفعل لمركبة أخرى في الكراج', 'error');
-        setIsSavingVehicle(false);
-        return;
-      }
-
-      const res = await garageApi.createVehicle({
-        customerId: selectedCustomer.id,
-        plateNumber: newPlate.trim(),
-        make: newMake.trim(),
-        model: newModel.trim() || 'صالون',
-        year: parseInt(newYear) || new Date().getFullYear(),
-        vin: newVin.trim() || undefined,
-        odometer: parseInt(newOdometer) || 0,
-        color: newColor.trim() || undefined,
-      });
-
-      if (res.success && res.data) {
-        showToast('تم حفظ المركبة وربطها بالعميل بنجاح', 'success');
-        setCustomerVehicles((prev) => [...prev, res.data!]);
-        setSelectedVehicleId(res.data.id);
-        setOdometerIn(res.data.odometer.toString());
-        setIsAddingNewVehicle(false);
-      } else {
-        showToast(res.error || 'تعذر حفظ المركبة', 'error');
-      }
-    } catch {
-      showToast('خطأ أثناء حفظ المركبة', 'error');
-    } finally {
-      setIsSavingVehicle(false);
-    }
+    setIsEnteringNewVehicle(true);
   };
 
   // Services Management
@@ -304,24 +261,17 @@ export function RegisterMaintenanceView({ onNavigate }: { onNavigate?: (route: R
     );
   };
 
-  // Parts Allocation
+  // Parts Allocation (Detailed Line Items)
   const handleAddPart = (item: InventoryItemDTO) => {
     const existing = allocatedParts.find((p) => p.inventoryItemId === item.id);
     if (existing) {
-      if (existing.quantity >= item.quantityInStock) {
-        showToast(`لا يتوفر رصيد كافٍ من "${item.name}". المتوفر حالياً: ${item.quantityInStock}`, 'error');
-        return;
-      }
       setAllocatedParts((prev) =>
         prev.map((p) =>
           p.inventoryItemId === item.id ? { ...p, quantity: p.quantity + 1 } : p
         )
       );
+      showToast(`تمت زيادة كمية "${item.name}" إلى ${existing.quantity + 1}`, 'info');
     } else {
-      if (item.quantityInStock <= 0) {
-        showToast(`هذه القطعة نفدت من المستودع`, 'error');
-        return;
-      }
       setAllocatedParts((prev) => [
         ...prev,
         {
@@ -330,11 +280,32 @@ export function RegisterMaintenanceView({ onNavigate }: { onNavigate?: (route: R
           partName: item.name,
           partCode: item.partCode,
           quantity: 1,
+          unit: item.unit || 'قطعة',
           unitPriceOmr: fromBaisa(item.sellingPriceBaisa).toFixed(3),
+          costPriceBaisa: item.purchaseCostBaisa || 0,
           availableStock: item.quantityInStock,
         },
       ]);
     }
+  };
+
+  const handleUpdatePartQuantity = (id: string, qty: number) => {
+    if (qty <= 0) return;
+    setAllocatedParts((prev) =>
+      prev.map((p) => (p.id === id ? { ...p, quantity: qty } : p))
+    );
+  };
+
+  const handleUpdatePartUnit = (id: string, unit: string) => {
+    setAllocatedParts((prev) =>
+      prev.map((p) => (p.id === id ? { ...p, unit } : p))
+    );
+  };
+
+  const handleUpdatePartPrice = (id: string, priceOmr: string) => {
+    setAllocatedParts((prev) =>
+      prev.map((p) => (p.id === id ? { ...p, unitPriceOmr: priceOmr } : p))
+    );
   };
 
   const handleRemovePart = (id: string) => {
@@ -347,37 +318,102 @@ export function RegisterMaintenanceView({ onNavigate }: { onNavigate?: (route: R
     0
   );
   const totalPartsBaisa = allocatedParts.reduce(
-    (sum, p) => sum + Math.round(toBaisa(parseFloat(p.unitPriceOmr) || 0) * p.quantity),
+    (sum, p) => sum + Math.round(toBaisa(parseFloat(p.unitPriceOmr) || 0) * (p.quantity || 1)),
     0
   );
   const subtotalBaisa = totalLaborBaisa + totalPartsBaisa;
   const vatAmountBaisa = Math.round((subtotalBaisa * 5) / 100);
   const grandEstimatedBaisa = subtotalBaisa + vatAmountBaisa;
 
-  // Submit Final Maintenance Operation
-  const handleSubmitMaintenance = async () => {
-    if (!selectedCustomer) {
-      showToast('يرجى اختيار أو تسجيل العميل', 'error');
-      return;
+  // Resolve Customer & Vehicle resolution helper (creates temporary or permanent records transparently)
+  const resolveCustomerAndVehicle = async (): Promise<{ customer: CustomerDTO; vehicle: VehicleDTO } | null> => {
+    let resolvedCustomer: CustomerDTO | null = selectedCustomer;
+
+    // 1. Resolve Customer
+    if (!resolvedCustomer) {
+      if (!newCustName.trim() || newCustName.trim().length < 2) {
+        showToast('يرجى كتابة اسم العميل (حرفين على الأقل)', 'error');
+        return null;
+      }
+
+      const custRes = await garageApi.createCustomer({
+        fullName: newCustName.trim(),
+        phone: newCustPhone.trim() || undefined,
+        altPhone: newCustAltPhone.trim() || undefined,
+        address: newCustAddress.trim() || undefined,
+        isPermanent: saveAsPermanentCustomer,
+      });
+
+      if (!custRes.success || !custRes.data) {
+        showToast(custRes.error || 'تعذر تسجيل العميل', 'error');
+        return null;
+      }
+      resolvedCustomer = custRes.data;
     }
-    if (!selectedVehicleId) {
-      showToast('يرجى اختيار أو تسجيل مركبة لأمر الصيانة', 'error');
-      return;
+
+    // 2. Resolve Vehicle
+    let resolvedVehicle: VehicleDTO | null = null;
+    if (selectedVehicleId && !isEnteringNewVehicle) {
+      const found = customerVehicles.find((v) => v.id === selectedVehicleId);
+      if (found) resolvedVehicle = found;
     }
+
+    if (!resolvedVehicle) {
+      if (!newPlate.trim()) {
+        showToast('يرجى إدخال رقم لوحة المركبة', 'error');
+        return null;
+      }
+
+      const vehRes = await garageApi.createVehicle({
+        customerId: resolvedCustomer.id,
+        plateNumber: newPlate.trim(),
+        make: newMake.trim() || 'Toyota',
+        model: newModel.trim() || 'صالون',
+        year: parseInt(newYear) || new Date().getFullYear(),
+        vin: newVin.trim() || undefined,
+        odometer: parseInt(newOdometer || odometerIn) || 0,
+        color: newColor.trim() || undefined,
+        isPermanent: saveAsPermanentVehicle,
+      });
+
+      if (!vehRes.success || !vehRes.data) {
+        showToast(vehRes.error || 'تعذر تسجيل بيانات المركبة', 'error');
+        return null;
+      }
+      resolvedVehicle = vehRes.data;
+    }
+
+    return { customer: resolvedCustomer, vehicle: resolvedVehicle };
+  };
+
+  // Submit Handler: either Save Repair Order OR Complete & Issue Invoice immediately
+  const handleFinalSubmit = async (mode: 'ro' | 'invoice') => {
     if (!reportedProblem.trim()) {
-      showToast('يرجى كتابة المشكلة المبلغ عنها من قبل العميل', 'error');
+      showToast('يرجى كتابة المشكلة المبلغ عنها أو وصف الصيانة', 'error');
       return;
     }
 
     setIsSubmitting(true);
+    setSubmitMode(mode);
+
     try {
+      const resolved = await resolveCustomerAndVehicle();
+      if (!resolved) {
+        setIsSubmitting(false);
+        setSubmitMode(null);
+        return;
+      }
+
+      const { customer, vehicle } = resolved;
       const selectedTechObj = technicians.find((t) => t.id === selectedTechnicianId);
+
+      // Create Repair Order
       const roRes = await garageApi.createRepairOrder({
-        customerId: selectedCustomer.id,
-        vehicleId: selectedVehicleId,
+        customerId: customer.id,
+        vehicleId: vehicle.id,
         reportedProblem: reportedProblem.trim(),
         inspectionNotes: inspectionNotes.trim() || undefined,
-        odometerIn: parseInt(odometerIn) || 0,
+        odometerIn: parseInt(odometerIn || newOdometer) || vehicle.odometer || 0,
         estimatedCostBaisa: grandEstimatedBaisa,
         assignedTechnicianId: selectedTechnicianId || undefined,
         assignedTechnicianName: selectedTechObj?.name,
@@ -387,12 +423,13 @@ export function RegisterMaintenanceView({ onNavigate }: { onNavigate?: (route: R
       if (!roRes.success || !roRes.data) {
         showToast(roRes.error || 'تعذر إنشاء أمر الصيانة', 'error');
         setIsSubmitting(false);
+        setSubmitMode(null);
         return;
       }
 
       const roId = roRes.data.id;
 
-      // Add labor tasks
+      // Add labor tasks to RO
       for (const serv of services) {
         if (serv.description.trim()) {
           await garageApi.addLaborTask({
@@ -405,27 +442,101 @@ export function RegisterMaintenanceView({ onNavigate }: { onNavigate?: (route: R
         }
       }
 
-      // Issue allocated parts to repair order
-      for (const part of allocatedParts) {
-        await garageApi.issuePartToRO({
+      // If user chose "Complete & Issue Invoice immediately":
+      if (mode === 'invoice') {
+        // Build itemized invoice items
+        const invoiceItems: InvoiceItemInput[] = [];
+
+        // Add Labor items
+        for (const serv of services) {
+          if (serv.description.trim()) {
+            const chargeBaisa = toBaisa(parseFloat(serv.laborChargeOmr) || 0);
+            invoiceItems.push({
+              itemType: 'LABOR',
+              description: serv.description.trim(),
+              quantity: 1,
+              unit: 'خدمة',
+              unitPriceBaisa: chargeBaisa,
+              costPriceBaisa: 0,
+              lineTotalBaisa: chargeBaisa,
+            });
+          }
+        }
+
+        // Add Part items (with inventory link, quantity, and unit)
+        for (const part of allocatedParts) {
+          const unitPriceBaisa = toBaisa(parseFloat(part.unitPriceOmr) || 0);
+          const lineTotalBaisa = Math.round(unitPriceBaisa * part.quantity);
+          invoiceItems.push({
+            itemType: 'PART',
+            sourceId: part.inventoryItemId,
+            description: `${part.partName} (${part.partCode})`,
+            quantity: part.quantity,
+            unit: part.unit || 'قطعة',
+            unitPriceBaisa,
+            costPriceBaisa: part.costPriceBaisa || 0,
+            lineTotalBaisa,
+          });
+        }
+
+        // Create Invoice with itemized list - automatically decrements inventory exactly once!
+        const invRes = await garageApi.createInvoice({
+          customerId: customer.id,
+          vehicleId: vehicle.id,
           repairOrderId: roId,
-          itemId: part.inventoryItemId,
-          quantity: part.quantity,
-          unitPriceBaisa: toBaisa(parseFloat(part.unitPriceOmr) || 0),
+          subtotalPartsBaisa: totalPartsBaisa,
+          subtotalLaborBaisa: totalLaborBaisa,
+          discountBaisa: 0,
+          taxRatePercent: 5.0,
+          invoiceLanguage: 'ar',
+          notes: reportedProblem.trim(),
+          items: invoiceItems,
         });
-      }
 
-      showToast(`تم تسجيل عملية الصيانة بنجاح برقم: ${roRes.data.roNumber}`, 'success');
+        if (invRes.success && invRes.data) {
+          showToast(`تم إتمام العملية وإصدار الفاتورة رقم ${invRes.data.invoiceNumber} بنجاح!`, 'success');
+          if (onNavigate) {
+            onNavigate('invoices');
+          }
+        } else {
+          showToast(invRes.error || 'تم حفظ أمر الصيانة ولكن تعذر إصدار الفاتورة', 'error');
+          if (onNavigate) {
+            onNavigate('repairOrders');
+          }
+        }
+      } else {
+        // Mode 'ro' (Save Repair Order only): issue allocated parts to RO
+        for (const part of allocatedParts) {
+          await garageApi.issuePartToRO({
+            repairOrderId: roId,
+            itemId: part.inventoryItemId,
+            quantity: part.quantity,
+            unitPriceBaisa: toBaisa(parseFloat(part.unitPriceOmr) || 0),
+          });
+        }
 
-      if (onNavigate) {
-        onNavigate('repairOrders');
+        showToast(`تم تسجيل عملية الصيانة بنجاح برقم: ${roRes.data.roNumber}`, 'success');
+        if (onNavigate) {
+          onNavigate('repairOrders');
+        }
       }
-    } catch {
-      showToast('خطأ أثناء حفظ عملية الصيانة', 'error');
+    } catch (err: unknown) {
+      showToast(err instanceof Error ? err.message : 'خطأ أثناء حفظ عملية الصيانة', 'error');
     } finally {
       setIsSubmitting(false);
+      setSubmitMode(null);
     }
   };
+
+  const filteredInventory = inventory.filter((item) => {
+    if (!inventorySearch.trim()) return true;
+    const q = inventorySearch.toLowerCase().trim();
+    return (
+      item.name.toLowerCase().includes(q) ||
+      item.partCode.toLowerCase().includes(q) ||
+      item.category.toLowerCase().includes(q)
+    );
+  });
 
   return (
     <div dir="rtl" className="space-y-6 pb-12 font-sans">
@@ -441,13 +552,13 @@ export function RegisterMaintenanceView({ onNavigate }: { onNavigate?: (route: R
                 تسجيل عملية صيانة جديدة
               </h2>
               <p className="text-xs text-slate-400 mt-0.5">
-                استقبال المركبة، تشخيص المشاكل، تعيين الفني، وإدراج قطع الغيار المطلوبة
+                استقبال العميل (دائم أو مؤقت)، اختيار المركبة، تسعير البنود من المخزون، وإصدار الفاتورة
               </p>
             </div>
           </div>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2">
           <Button
             variant="ghost"
             size="sm"
@@ -456,13 +567,22 @@ export function RegisterMaintenanceView({ onNavigate }: { onNavigate?: (route: R
             إلغاء والعودة
           </Button>
           <Button
-            variant="gold"
+            variant="secondary"
             size="md"
-            icon={<CheckCircle2 className="w-4 h-4" />}
-            onClick={handleSubmitMaintenance}
+            icon={<CheckCircle2 className="w-4 h-4 text-sky-400" />}
+            onClick={() => handleFinalSubmit('ro')}
             disabled={isSubmitting}
           >
-            {isSubmitting ? 'جارٍ الحفظ والترحيل...' : 'حفظ عملية الصيانة المعتمدة'}
+            {isSubmitting && submitMode === 'ro' ? 'جارٍ الحفظ...' : 'حفظ كأمر صيانة'}
+          </Button>
+          <Button
+            variant="gold"
+            size="md"
+            icon={<Receipt className="w-4 h-4" />}
+            onClick={() => handleFinalSubmit('invoice')}
+            disabled={isSubmitting}
+          >
+            {isSubmitting && submitMode === 'invoice' ? 'جارٍ إصدار الفاتورة...' : 'إتمام وإصدار الفاتورة فوراً'}
           </Button>
         </div>
       </div>
@@ -470,27 +590,40 @@ export function RegisterMaintenanceView({ onNavigate }: { onNavigate?: (route: R
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Left 2 Cols: Customer, Vehicle & Service Intake */}
         <div className="lg:col-span-2 space-y-6">
-          {/* Step 1: Customer Autocomplete / Selection */}
+          {/* Step 1: Customer Intake with Autocomplete & Optional Permanent Saving */}
           <Card className="bg-[#0f1522] border-[#1d273a]">
             <CardContent className="p-5 space-y-4">
               <div className="flex items-center justify-between border-b border-slate-800 pb-3">
                 <div className="flex items-center gap-2 text-sm font-bold text-slate-100">
                   <User className="w-4 h-4 text-amber-400" />
-                  <span>1. تحديد العميل (Customer Selection)</span>
+                  <span>1. بيانات العميل (التعرف التلقائي أو إدخال مؤقت)</span>
                 </div>
-                {!selectedCustomer && !isAddingNewCustomer && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    icon={<UserPlus className="w-3.5 h-3.5" />}
-                    onClick={() => setIsAddingNewCustomer(true)}
-                  >
-                    تسجيل عميل جديد
-                  </Button>
+                {!selectedCustomer && (
+                  <div className="flex items-center gap-2 text-xs">
+                    {customerMode === 'search' ? (
+                      <button
+                        type="button"
+                        onClick={handleSwitchToManualCustomer}
+                        className="text-amber-400 hover:text-amber-300 font-semibold flex items-center gap-1 cursor-pointer"
+                      >
+                        <UserPlus className="w-3.5 h-3.5" />
+                        <span>إدخال عميل جديد / مؤقت مباشرة</span>
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => setCustomerMode('search')}
+                        className="text-slate-400 hover:text-white font-semibold flex items-center gap-1 cursor-pointer"
+                      >
+                        <Search className="w-3.5 h-3.5" />
+                        <span>الرجوع للبحث التلقائي</span>
+                      </button>
+                    )}
+                  </div>
                 )}
               </div>
 
-              {/* Selected Customer Card or Search Autocomplete */}
+              {/* Selected Customer View */}
               {selectedCustomer ? (
                 <div className="p-4 rounded-xl bg-[#141d2f] border border-amber-500/40 flex items-center justify-between">
                   <div className="space-y-1">
@@ -499,7 +632,7 @@ export function RegisterMaintenanceView({ onNavigate }: { onNavigate?: (route: R
                         {selectedCustomer.fullName}
                       </span>
                       <Badge variant={selectedCustomer.isPermanent ? 'emerald' : 'sky'}>
-                        {selectedCustomer.isPermanent ? 'عميل دائم' : 'زيارة فردية'}
+                        {selectedCustomer.isPermanent ? 'عميل دائم مسجل' : 'عميل زيارة مؤقتة'}
                       </Badge>
                     </div>
                     {selectedCustomer.phone && (
@@ -516,18 +649,13 @@ export function RegisterMaintenanceView({ onNavigate }: { onNavigate?: (route: R
                     تغيير العميل
                   </Button>
                 </div>
-              ) : isAddingNewCustomer ? (
-                /* Inline New Customer Form with Explicit Save */
+              ) : customerMode === 'manual' ? (
+                /* Manual / Temporary Customer Entry (No forced pre-save) */
                 <div className="p-4 rounded-xl bg-[#121927] border border-[#273752] space-y-4">
-                  <div className="flex items-center justify-between text-xs font-bold text-amber-400">
-                    <span>إدخال بيانات عميل جديد (حفظ صريح مطلوب):</span>
-                    <button
-                      type="button"
-                      onClick={() => setIsAddingNewCustomer(false)}
-                      className="text-slate-400 hover:text-white"
-                    >
-                      إلغاء
-                    </button>
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="font-bold text-amber-400">
+                      بيانات العميل لهذه العملية (يمكن المتابعة دون تسجيل دائم):
+                    </span>
                   </div>
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -543,7 +671,7 @@ export function RegisterMaintenanceView({ onNavigate }: { onNavigate?: (route: R
                     </div>
                     <div>
                       <label className="text-[11px] font-semibold text-slate-300 block mb-1">
-                        رقم الهاتف *
+                        رقم الهاتف
                       </label>
                       <Input
                         value={newCustPhone}
@@ -575,23 +703,29 @@ export function RegisterMaintenanceView({ onNavigate }: { onNavigate?: (route: R
                     </div>
                   </div>
 
-                  <div className="flex justify-end pt-2">
-                    <Button
-                      variant="gold"
-                      size="sm"
-                      icon={<CheckCircle2 className="w-3.5 h-3.5" />}
-                      onClick={handleSaveNewCustomer}
-                      disabled={isSavingCustomer}
-                    >
-                      {isSavingCustomer ? 'جارٍ الحفظ...' : 'حفظ العميل / Save Customer'}
-                    </Button>
+                  {/* Optional Permanent Customer Checkbox */}
+                  <div className="pt-2 border-t border-slate-800/80 flex items-center justify-between">
+                    <label className="flex items-center gap-2 cursor-pointer text-xs text-slate-300">
+                      <input
+                        type="checkbox"
+                        checked={saveAsPermanentCustomer}
+                        onChange={(e) => setSaveAsPermanentCustomer(e.target.checked)}
+                        className="w-4 h-4 rounded text-amber-500 bg-slate-800 border-slate-700 focus:ring-amber-500 focus:ring-offset-0 cursor-pointer"
+                      />
+                      <span className="font-semibold text-amber-300">
+                        حفظ كعميل دائم في سجلات الورشة (Save as permanent customer)
+                      </span>
+                    </label>
+                    <span className="text-[11px] text-slate-500">
+                      {saveAsPermanentCustomer ? 'سيتم إدراجه بقائمة العملاء الدائمين' : 'سيتم الحساب كزيارة مؤقتة لهذه الفاتورة'}
+                    </span>
                   </div>
                 </div>
               ) : (
-                /* Autocomplete Search Input */
+                /* Autocomplete Search Input with Recognition */
                 <div ref={autocompleteRef} className="relative">
                   <label className="text-xs font-semibold text-slate-300 block mb-1.5">
-                    ابحث بالاسم أو رقم الهاتف لاسترجاع ملف العميل الحالي:
+                    اكتب اسم العميل أو رقم الهاتف للتعرف التلقائي على ملفه:
                   </label>
                   <div className="relative">
                     <div className="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none text-slate-500">
@@ -611,22 +745,18 @@ export function RegisterMaintenanceView({ onNavigate }: { onNavigate?: (route: R
                     )}
                   </div>
 
-                  {/* Dropdown Results */}
+                  {/* Autocomplete Dropdown */}
                   {showCustomerDropdown && (
                     <div className="absolute top-full right-0 left-0 mt-1.5 bg-[#101726] border border-[#24344d] rounded-xl shadow-2xl z-30 max-h-60 overflow-y-auto divide-y divide-slate-800/80">
                       {matchingCustomers.length === 0 ? (
                         <div className="p-3 text-center text-xs text-slate-400">
-                          لا يوجد عميل بهذا الاسم.{' '}
+                          لم يتم العثور على عميل مطابق.{' '}
                           <button
                             type="button"
-                            onClick={() => {
-                              setNewCustName(customerQuery);
-                              setIsAddingNewCustomer(true);
-                              setShowCustomerDropdown(false);
-                            }}
+                            onClick={handleSwitchToManualCustomer}
                             className="text-amber-400 font-bold hover:underline ml-1"
                           >
-                            تسجيل كعميل جديد الآن؟
+                            المتابعة كعميل جديد / مؤقت؟
                           </button>
                         </div>
                       ) : (
@@ -638,7 +768,12 @@ export function RegisterMaintenanceView({ onNavigate }: { onNavigate?: (route: R
                             className="w-full p-3 text-right hover:bg-[#182337] flex items-center justify-between transition-colors cursor-pointer"
                           >
                             <div>
-                              <div className="font-bold text-white text-xs">{cust.fullName}</div>
+                              <div className="font-bold text-white text-xs flex items-center gap-2">
+                                <span>{cust.fullName}</span>
+                                <Badge variant={cust.isPermanent ? 'emerald' : 'sky'} size="sm">
+                                  {cust.isPermanent ? 'دائم' : 'مؤقت'}
+                                </Badge>
+                              </div>
                               {cust.address && (
                                 <div className="text-[11px] text-slate-400">{cust.address}</div>
                               )}
@@ -656,44 +791,31 @@ export function RegisterMaintenanceView({ onNavigate }: { onNavigate?: (route: R
             </CardContent>
           </Card>
 
-          {/* Step 2: Vehicle Selection or Inline Registration */}
+          {/* Step 2: Vehicle Selection or Temporary Vehicle Intake */}
           <Card className="bg-[#0f1522] border-[#1d273a]">
             <CardContent className="p-5 space-y-4">
               <div className="flex items-center justify-between border-b border-slate-800 pb-3">
                 <div className="flex items-center gap-2 text-sm font-bold text-slate-100">
                   <Car className="w-4 h-4 text-amber-400" />
-                  <span>2. اختيار المركبة (Vehicle Selection)</span>
+                  <span>2. بيانات المركبة (Vehicle Selection)</span>
                 </div>
-                {selectedCustomer && !isAddingNewVehicle && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    icon={<Plus className="w-3.5 h-3.5" />}
-                    onClick={() => setIsAddingNewVehicle(true)}
+                {selectedCustomer && customerVehicles.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setIsEnteringNewVehicle(!isEnteringNewVehicle)}
+                    className="text-xs text-amber-400 hover:text-amber-300 font-semibold"
                   >
-                    إضافة مركبة للعميل
-                  </Button>
+                    {isEnteringNewVehicle ? 'عرض سيارات العميل المسجلة' : '+ تسجيل مركبة جديدة/مؤقتة'}
+                  </button>
                 )}
               </div>
 
-              {!selectedCustomer ? (
-                <div className="p-6 text-center text-xs text-slate-500">
-                  يرجى تحديد العميل أولاً لعرض مركباته المسجلة
-                </div>
-              ) : isAddingNewVehicle ? (
-                /* Inline Vehicle Registration Form */
+              {/* Vehicle Options */}
+              {isEnteringNewVehicle || !selectedCustomer || customerVehicles.length === 0 ? (
+                /* New or Temporary Vehicle Form */
                 <div className="p-4 rounded-xl bg-[#121927] border border-[#273752] space-y-4">
-                  <div className="flex items-center justify-between text-xs font-bold text-amber-400">
-                    <span>تسجيل مركبة جديدة للعميل {selectedCustomer.fullName}:</span>
-                    {customerVehicles.length > 0 && (
-                      <button
-                        type="button"
-                        onClick={() => setIsAddingNewVehicle(false)}
-                        className="text-slate-400 hover:text-white"
-                      >
-                        العودة للمركبات المسجلة
-                      </button>
-                    )}
+                  <div className="text-xs font-bold text-amber-400">
+                    بيانات المركبة لهذه العملية (اللوحة، الطراز، وسنة الصنع):
                   </div>
 
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -740,17 +862,20 @@ export function RegisterMaintenanceView({ onNavigate }: { onNavigate?: (route: R
                     </div>
                     <div>
                       <label className="text-[11px] font-semibold text-slate-300 block mb-1">
-                        قراءة العداد الحالية (كم)
+                        قراءة العداد (كم)
                       </label>
                       <Input
                         type="number"
                         value={newOdometer}
-                        onChange={(e) => setNewOdometer(e.target.value)}
+                        onChange={(e) => {
+                          setNewOdometer(e.target.value);
+                          setOdometerIn(e.target.value);
+                        }}
                       />
                     </div>
                     <div>
                       <label className="text-[11px] font-semibold text-slate-300 block mb-1">
-                        رقم الشاصي (VIN)
+                        رقم الشاصي (VIN) - اختياري
                       </label>
                       <Input
                         value={newVin}
@@ -761,24 +886,20 @@ export function RegisterMaintenanceView({ onNavigate }: { onNavigate?: (route: R
                     </div>
                   </div>
 
-                  <div className="flex justify-end pt-2">
-                    <Button
-                      variant="gold"
-                      size="sm"
-                      icon={<CheckCircle2 className="w-3.5 h-3.5" />}
-                      onClick={handleSaveNewVehicle}
-                      disabled={isSavingVehicle}
-                    >
-                      {isSavingVehicle ? 'جارٍ الحفظ...' : 'حفظ المركبة وربطها'}
-                    </Button>
+                  {/* Optional Permanent Vehicle Checkbox */}
+                  <div className="pt-2 border-t border-slate-800/80 flex items-center justify-between">
+                    <label className="flex items-center gap-2 cursor-pointer text-xs text-slate-300">
+                      <input
+                        type="checkbox"
+                        checked={saveAsPermanentVehicle}
+                        onChange={(e) => setSaveAsPermanentVehicle(e.target.checked)}
+                        className="w-4 h-4 rounded text-amber-500 bg-slate-800 border-slate-700 focus:ring-amber-500 cursor-pointer"
+                      />
+                      <span className="font-semibold text-amber-300">
+                        حفظ المركبة بشكل دائم في السجلات (Save as permanent vehicle)
+                      </span>
+                    </label>
                   </div>
-                </div>
-              ) : customerVehicles.length === 0 ? (
-                <div className="p-4 rounded-xl bg-amber-950/20 border border-amber-500/30 text-amber-200 text-xs flex items-center justify-between">
-                  <span>لا توجد سيارات مسجلة لهذا العميل حالياً.</span>
-                  <Button variant="gold" size="sm" onClick={() => setIsAddingNewVehicle(true)}>
-                    تسجيل سيارة الآن
-                  </Button>
                 </div>
               ) : (
                 /* Select from existing customer vehicles */
@@ -792,6 +913,9 @@ export function RegisterMaintenanceView({ onNavigate }: { onNavigate?: (route: R
                         onClick={() => {
                           setSelectedVehicleId(v.id);
                           setOdometerIn(v.odometer.toString());
+                          if (v.vin) {
+                            setNewVin(v.vin);
+                          }
                         }}
                         className={`p-3.5 rounded-xl border text-right transition-all flex flex-col justify-between ${
                           isSelected
@@ -807,8 +931,13 @@ export function RegisterMaintenanceView({ onNavigate }: { onNavigate?: (route: R
                             {v.odometer.toLocaleString()} كم
                           </span>
                         </div>
-                        <div className="mt-2 text-xs font-semibold text-slate-100">
-                          {v.make} {v.model} ({v.year})
+                        <div className="mt-2 text-xs font-semibold text-slate-100 flex items-center justify-between">
+                          <span>{v.make} {v.model} ({v.year})</span>
+                          {v.vin && (
+                            <span className="text-[10px] font-mono text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/30" dir="ltr">
+                              VIN: {v.vin}
+                            </span>
+                          )}
                         </div>
                       </button>
                     );
@@ -877,7 +1006,7 @@ export function RegisterMaintenanceView({ onNavigate }: { onNavigate?: (route: R
                   value={reportedProblem}
                   onChange={(e) => setReportedProblem(e.target.value)}
                   rows={2}
-                  placeholder="وصف المشكلة (مثال: صوت طقطقة عند الضغط على الفرامل، ضعف في عزم المحرك، صيانة دورية 50 ألف كم...)"
+                  placeholder="وصف المشكلة (مثال: تبديل زيت وفلتر أصلي، فحص صوت طقطقة في الفرامل، ميزانية رودات...)"
                   className="w-full px-3 py-2 bg-[#141d2f] border border-[#273752] rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
                 />
               </div>
@@ -921,7 +1050,7 @@ export function RegisterMaintenanceView({ onNavigate }: { onNavigate?: (route: R
                       <Input
                         value={s.description}
                         onChange={(e) => handleUpdateService(s.id, 'description', e.target.value)}
-                        placeholder="بيان العمل / الخدمة (مثال: فك وتركيب فحمات، تبديل زيت وفلتر، ميزانية رودات...)"
+                        placeholder="بيان العمل / الخدمة (مثال: أجور يد تبديل زيت وفلتر، فك وتركيب فحمات...)"
                       />
                     </div>
                     <div className="w-full sm:w-36">
@@ -938,7 +1067,7 @@ export function RegisterMaintenanceView({ onNavigate }: { onNavigate?: (route: R
                       type="button"
                       onClick={() => handleRemoveService(s.id)}
                       disabled={services.length <= 1}
-                      className="p-2 text-slate-500 hover:text-red-400 disabled:opacity-30 transition-colors"
+                      className="p-2 text-slate-500 hover:text-red-400 disabled:opacity-30 transition-colors cursor-pointer"
                     >
                       <Trash2 className="w-4 h-4" />
                     </button>
@@ -949,88 +1078,157 @@ export function RegisterMaintenanceView({ onNavigate }: { onNavigate?: (route: R
           </Card>
         </div>
 
-        {/* Right Col: Spare Parts Picker & Financial Summary */}
+        {/* Right Col: Itemized Spare Parts Picker & Financial Summary */}
         <div className="space-y-6">
-          {/* Spare Parts Allocation from Real Inventory */}
+          {/* Detailed Itemized Spare Parts Allocation */}
           <Card className="bg-[#0f1522] border-[#1d273a]">
             <CardContent className="p-5 space-y-4">
-              <div className="flex items-center gap-2 text-sm font-bold text-slate-100 border-b border-slate-800 pb-3">
-                <Package className="w-4 h-4 text-amber-400" />
-                <span>قطع الغيار المطلوبة</span>
+              <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                <div className="flex items-center gap-2 text-sm font-bold text-slate-100">
+                  <Package className="w-4 h-4 text-amber-400" />
+                  <span>قطع الغيار والمواد من المخزون</span>
+                </div>
+                <Badge variant="gold" size="sm">
+                  {allocatedParts.length} {allocatedParts.length === 1 ? 'بند' : 'بنود'}
+                </Badge>
               </div>
 
-              {/* Allocated Parts */}
-              <div className="space-y-2 max-h-56 overflow-y-auto">
+              {/* Selected Itemized Parts Table / Cards */}
+              <div className="space-y-3 max-h-72 overflow-y-auto">
                 {allocatedParts.length === 0 ? (
-                  <div className="text-center py-4 text-xs text-slate-500">
-                    لم يتم اختيار قطع غيار بعد. انقر على أي قطعة أدناه لإضافتها.
+                  <div className="text-center py-6 text-xs text-slate-500 border border-dashed border-slate-800 rounded-xl">
+                    لم يتم اختيار قطع غيار بعد. اختر المنتجات من قائمة المستودع أدناه لتسعيرها كبنود تفصيلية.
                   </div>
                 ) : (
-                  allocatedParts.map((p) => (
-                    <div
-                      key={p.id}
-                      className="flex items-center justify-between p-2.5 rounded-lg bg-[#141d2f] border border-slate-800 text-xs"
-                    >
-                      <div className="min-w-0 pr-1">
-                        <div className="font-semibold text-white truncate">{p.partName}</div>
-                        <div className="text-[10px] text-slate-400 font-mono">
-                          {p.quantity} × {p.unitPriceOmr} ر.ع
+                  allocatedParts.map((p) => {
+                    const lineTotal = (parseFloat(p.unitPriceOmr) || 0) * (p.quantity || 1);
+                    return (
+                      <div
+                        key={p.id}
+                        className="p-3 rounded-xl bg-[#141d2f] border border-slate-800 text-xs space-y-2"
+                      >
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <span className="font-bold text-white text-xs">{p.partName}</span>
+                            <span className="text-[10px] text-slate-400 font-mono block">
+                              كود: {p.partCode} (المتوفر: {p.availableStock})
+                            </span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => handleRemovePart(p.id)}
+                            className="text-slate-500 hover:text-rose-400 p-1 cursor-pointer transition-colors"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+
+                        {/* Editable Quantity, Unit, Unit Price, Line Total */}
+                        <div className="grid grid-cols-4 gap-1.5 pt-1 border-t border-slate-800/60">
+                          <div>
+                            <label className="text-[10px] text-slate-400 block mb-0.5">الكمية</label>
+                            <input
+                              type="number"
+                              min="1"
+                              value={p.quantity}
+                              onChange={(e) => handleUpdatePartQuantity(p.id, parseInt(e.target.value) || 1)}
+                              className="w-full bg-[#0c121e] border border-slate-700 rounded px-1.5 py-1 text-xs text-white font-mono text-center"
+                            />
+                          </div>
+
+                          <div>
+                            <label className="text-[10px] text-slate-400 block mb-0.5">الوحدة</label>
+                            <select
+                              value={p.unit}
+                              onChange={(e) => handleUpdatePartUnit(p.id, e.target.value)}
+                              className="w-full bg-[#0c121e] border border-slate-700 rounded px-1 py-1 text-xs text-white"
+                            >
+                              {COMMON_UNITS.map((u) => (
+                                <option key={u} value={u}>
+                                  {u}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+
+                          <div>
+                            <label className="text-[10px] text-slate-400 block mb-0.5">السعر (ر.ع)</label>
+                            <input
+                              type="number"
+                              step="0.100"
+                              value={p.unitPriceOmr}
+                              onChange={(e) => handleUpdatePartPrice(p.id, e.target.value)}
+                              className="w-full bg-[#0c121e] border border-slate-700 rounded px-1.5 py-1 text-xs text-amber-300 font-mono text-center"
+                            />
+                          </div>
+
+                          <div>
+                            <label className="text-[10px] text-slate-400 block mb-0.5">الإجمالي</label>
+                            <div className="font-mono font-bold text-emerald-400 text-xs py-1 text-center bg-emerald-500/10 rounded border border-emerald-500/20">
+                              {lineTotal.toFixed(3)}
+                            </div>
+                          </div>
                         </div>
                       </div>
-                      <div className="flex items-center gap-2 shrink-0">
-                        <span className="font-mono font-bold text-amber-300">
-                          {(parseFloat(p.unitPriceOmr) * p.quantity).toFixed(3)} ر.ع
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => handleRemovePart(p.id)}
-                          className="text-slate-500 hover:text-red-400 p-1"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    </div>
-                  ))
+                    );
+                  })
                 )}
               </div>
 
-              {/* Inventory Quick Picker */}
+              {/* Inventory Quick Search & Picker */}
               <div className="pt-3 border-t border-slate-800 space-y-2">
-                <span className="text-[11px] font-semibold text-slate-400 block">
-                  قطع الغيار المتوفرة في المستودع:
-                </span>
-                <div className="max-h-48 overflow-y-auto space-y-1.5 pr-1">
-                  {inventory.map((item) => (
-                    <button
-                      key={item.id}
-                      type="button"
-                      onClick={() => handleAddPart(item)}
-                      className="w-full p-2 rounded-lg bg-[#111827] hover:bg-[#182337] border border-slate-800 flex items-center justify-between text-xs text-right transition-colors cursor-pointer"
-                    >
-                      <div className="min-w-0 pr-1">
-                        <div className="font-medium text-slate-200 truncate">{item.name}</div>
-                        <div className="text-[10px] text-slate-500 font-mono">{item.partCode}</div>
-                      </div>
-                      <div className="text-left shrink-0">
-                        <div className="font-mono font-bold text-amber-300">
-                          {fromBaisa(item.sellingPriceBaisa).toFixed(3)} ر.ع
+                <div className="flex items-center justify-between text-[11px] font-semibold text-slate-400">
+                  <span>منتجات المستودع المتاحة:</span>
+                </div>
+                <div className="relative">
+                  <input
+                    type="text"
+                    value={inventorySearch}
+                    onChange={(e) => setInventorySearch(e.target.value)}
+                    placeholder="ابحث برقم القطعة أو الاسم (مثال: فلتر، زيت...)"
+                    className="w-full px-2.5 py-1.5 bg-[#141d2f] border border-slate-800 rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                  />
+                </div>
+
+                <div className="max-h-44 overflow-y-auto space-y-1 pr-1">
+                  {filteredInventory.length === 0 ? (
+                    <div className="text-center py-2 text-[11px] text-slate-500">لا توجد قطع مطابقة للبحث</div>
+                  ) : (
+                    filteredInventory.map((item) => (
+                      <button
+                        key={item.id}
+                        type="button"
+                        onClick={() => handleAddPart(item)}
+                        className="w-full p-2 rounded-lg bg-[#111827] hover:bg-[#182337] border border-slate-800 flex items-center justify-between text-xs text-right transition-colors cursor-pointer"
+                      >
+                        <div className="min-w-0 pr-1">
+                          <div className="font-medium text-slate-200 truncate">{item.name}</div>
+                          <div className="text-[10px] text-slate-500 font-mono">
+                            {item.partCode} • {item.unit || 'قطعة'}
+                          </div>
                         </div>
-                        <div className="text-[10px] text-emerald-400">
-                          متوفر: {item.quantityInStock}
+                        <div className="text-left shrink-0">
+                          <div className="font-mono font-bold text-amber-300">
+                            {fromBaisa(item.sellingPriceBaisa).toFixed(3)} ر.ع
+                          </div>
+                          <div className="text-[10px] text-emerald-400">
+                            متوفر: {item.quantityInStock}
+                          </div>
                         </div>
-                      </div>
-                    </button>
-                  ))}
+                      </button>
+                    ))
+                  )}
                 </div>
               </div>
             </CardContent>
           </Card>
 
-          {/* Estimated Itemized Summary Card */}
+          {/* Itemized Calculation Summary Card */}
           <Card className="bg-[#0f1522] border-[#1d273a]">
             <CardContent className="p-5 space-y-3">
-              <div className="text-sm font-bold text-slate-100 border-b border-slate-800 pb-3">
-                الحساب التقديري للعملية
+              <div className="text-sm font-bold text-slate-100 border-b border-slate-800 pb-3 flex items-center justify-between">
+                <span>ملخص الحساب المالي المعتمد</span>
+                <span className="text-[11px] text-amber-400 font-normal">دقة 3 خانات OMR</span>
               </div>
 
               <div className="space-y-2 text-xs">
@@ -1041,7 +1239,7 @@ export function RegisterMaintenanceView({ onNavigate }: { onNavigate?: (route: R
                   </span>
                 </div>
                 <div className="flex justify-between text-slate-400">
-                  <span>إجمالي قطع الغيار ({allocatedParts.length} قطع):</span>
+                  <span>إجمالي قطع الغيار والمواد ({allocatedParts.length} بنود):</span>
                   <span className="font-mono font-semibold text-slate-200">
                     {formatOMR(fromBaisa(totalPartsBaisa))}
                   </span>
@@ -1053,23 +1251,33 @@ export function RegisterMaintenanceView({ onNavigate }: { onNavigate?: (route: R
                   </span>
                 </div>
                 <div className="flex justify-between text-white font-bold text-sm border-t-2 border-slate-800 pt-2.5">
-                  <span>المجموع التقديري:</span>
+                  <span>المجموع النهائي المستحق:</span>
                   <span className="font-mono text-base text-amber-400">
                     {formatOMR(fromBaisa(grandEstimatedBaisa))}
                   </span>
                 </div>
               </div>
 
-              <div className="pt-4">
+              <div className="pt-4 space-y-2">
                 <Button
                   variant="gold"
                   size="md"
                   className="w-full"
-                  icon={<CheckCircle2 className="w-4 h-4" />}
-                  onClick={handleSubmitMaintenance}
+                  icon={<Receipt className="w-4 h-4" />}
+                  onClick={() => handleFinalSubmit('invoice')}
                   disabled={isSubmitting}
                 >
-                  {isSubmitting ? 'جارٍ الحفظ...' : 'تأكيد وحفظ عملية الصيانة'}
+                  {isSubmitting && submitMode === 'invoice' ? 'جارٍ إصدار الفاتورة...' : 'إتمام العملية وإصدار الفاتورة فوراً'}
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  className="w-full text-slate-300"
+                  icon={<CheckCircle2 className="w-4 h-4 text-sky-400" />}
+                  onClick={() => handleFinalSubmit('ro')}
+                  disabled={isSubmitting}
+                >
+                  {isSubmitting && submitMode === 'ro' ? 'جارٍ الحفظ...' : 'حفظ كأمر صيانة للمتابعة لاحقاً'}
                 </Button>
               </div>
             </CardContent>

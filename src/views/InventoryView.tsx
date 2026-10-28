@@ -44,7 +44,7 @@ import type {
   InventorySerialDTO,
   InventoryMovementDTO,
 } from '../types/ipc.ts';
-import { formatOMR, toBaisa, fromBaisa } from '../core/currency.ts';
+import { formatOMR, formatBaisa, toBaisa, fromBaisa } from '../core/currency.ts';
 
 export function InventoryView({ onNavigate }: { onNavigate?: (route: RouteId) => void }) {
   const { lang, isRtl, t } = useLanguage();
@@ -469,10 +469,10 @@ export function InventoryView({ onNavigate }: { onNavigate?: (route: RouteId) =>
                             </span>
                           </td>
                           <td className="py-3.5 px-4 font-mono text-slate-400 whitespace-nowrap">
-                            {formatOMR(item.purchaseCostBaisa)}
+                            {formatBaisa(item.purchaseCostBaisa, { arabicLabel: isAr, useThousandsSeparator: true })}
                           </td>
                           <td className="py-3.5 px-4 font-mono font-bold text-emerald-400 whitespace-nowrap">
-                            {formatOMR(item.sellingPriceBaisa)}
+                            {formatBaisa(item.sellingPriceBaisa, { arabicLabel: isAr, useThousandsSeparator: true })}
                           </td>
                           <td className="py-3.5 px-4 text-slate-400 whitespace-nowrap">
                             {item.location || '—'}

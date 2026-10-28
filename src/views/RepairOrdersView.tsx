@@ -55,7 +55,7 @@ import type {
   InventoryItemDTO,
   InventorySerialDTO,
 } from '../types/ipc.ts';
-import { formatOMR, toBaisa, fromBaisa } from '../core/currency.ts';
+import { formatOMR, formatBaisa, toBaisa, fromBaisa } from '../core/currency.ts';
 
 const STATUS_ORDER: RepairOrderStatus[] = [
   'RECEIVED',
@@ -693,7 +693,7 @@ export function RepairOrdersView({ onNavigate }: { onNavigate?: (route: RouteId)
                       {ro.assignedTechnicianName || '—'}
                     </td>
                     <td className="py-3.5 px-4 font-mono font-bold text-emerald-400 whitespace-nowrap">
-                      {formatOMR(ro.grandTotalBaisa || 0)}
+                      {formatBaisa(ro.grandTotalBaisa || 0, { arabicLabel: isAr, useThousandsSeparator: true })}
                     </td>
                     <td className="py-3.5 px-4 text-end">
                       <Button
@@ -754,6 +754,19 @@ export function RepairOrdersView({ onNavigate }: { onNavigate?: (route: RouteId)
                     <Car className="w-3.5 h-3.5 text-slate-500" />
                     <strong className="text-white font-mono">{selectedRO.vehiclePlate}</strong> ({selectedRO.vehicleMake} {selectedRO.vehicleModel})
                   </span>
+                  {(() => {
+                    const v = vehicles.find((veh) => veh.id === selectedRO.vehicleId);
+                    const vin = v?.vin || (selectedRO as any).vehicleVin;
+                    return vin ? (
+                      <>
+                        <span>•</span>
+                        <span className="flex items-center gap-1 text-slate-400">
+                          <span>{t('vin') || 'رقم الشاصي'}:</span>
+                          <strong className="text-amber-300 font-mono" dir="ltr">{vin}</strong>
+                        </span>
+                      </>
+                    ) : null;
+                  })()}
                   <span>•</span>
                   <span>{t('odometerIn')}: <strong className="text-white font-mono">{selectedRO.odometerIn} km</strong></span>
                 </div>
@@ -845,19 +858,19 @@ export function RepairOrdersView({ onNavigate }: { onNavigate?: (route: RouteId)
               <div>
                 <span className="text-[11px] text-slate-400 block">{t('roFinancialSummary')}</span>
                 <span className="text-xs text-slate-300">
-                  {t('subtotalParts')}: <strong className="font-mono text-white">{formatOMR(selectedRO.partsTotalBaisa || 0)}</strong>
+                  {t('subtotalParts')}: <strong className="font-mono text-white">{formatBaisa(selectedRO.partsTotalBaisa || 0)}</strong>
                   {' + '}
-                  {t('subtotalLabor')}: <strong className="font-mono text-white">{formatOMR(selectedRO.laborTotalBaisa || 0)}</strong>
+                  {t('subtotalLabor')}: <strong className="font-mono text-white">{formatBaisa(selectedRO.laborTotalBaisa || 0)}</strong>
                 </span>
               </div>
               <div className="flex items-center gap-6">
                 <div>
                   <span className="text-[11px] text-slate-400 block">{t('taxAmount')}</span>
-                  <span className="font-mono text-xs text-slate-300">{formatOMR(selectedRO.taxAmountBaisa || 0)}</span>
+                  <span className="font-mono text-xs text-slate-300">{formatBaisa(selectedRO.taxAmountBaisa || 0)}</span>
                 </div>
                 <div className="text-end">
                   <span className="text-[11px] text-amber-400 font-semibold block">{t('grandTotal')}</span>
-                  <span className="text-lg font-mono font-bold text-emerald-400">{formatOMR(selectedRO.grandTotalBaisa || 0)}</span>
+                  <span className="text-lg font-mono font-bold text-emerald-400">{formatBaisa(selectedRO.grandTotalBaisa || 0)}</span>
                 </div>
               </div>
             </div>
@@ -944,9 +957,9 @@ export function RepairOrdersView({ onNavigate }: { onNavigate?: (route: RouteId)
                             <td className="py-2.5 px-3 font-medium text-white">{tItem.description}</td>
                             <td className="py-2.5 px-3 text-slate-400">{tItem.technicianName || '—'}</td>
                             <td className="py-2.5 px-3 font-mono">{tItem.hours} hrs</td>
-                            <td className="py-2.5 px-3 font-mono">{formatOMR(tItem.hourlyRateBaisa)}</td>
+                            <td className="py-2.5 px-3 font-mono">{formatBaisa(tItem.hourlyRateBaisa)}</td>
                             <td className="py-2.5 px-3 font-mono font-bold text-amber-400">
-                              {formatOMR(tItem.laborChargeBaisa)}
+                              {formatBaisa(tItem.laborChargeBaisa)}
                             </td>
                             {selectedRO.status !== 'COMPLETED' && (
                               <td className="py-2.5 px-3 text-end">
@@ -999,9 +1012,9 @@ export function RepairOrdersView({ onNavigate }: { onNavigate?: (route: RouteId)
                               {p.serialNumber || '—'}
                             </td>
                             <td className="py-2.5 px-3 font-mono">{p.quantity}</td>
-                            <td className="py-2.5 px-3 font-mono">{formatOMR(p.unitPriceBaisa)}</td>
+                            <td className="py-2.5 px-3 font-mono">{formatBaisa(p.unitPriceBaisa)}</td>
                             <td className="py-2.5 px-3 font-mono font-bold text-amber-400">
-                              {formatOMR(p.totalPriceBaisa)}
+                              {formatBaisa(p.totalPriceBaisa)}
                             </td>
                             <td className="py-2.5 px-3">
                               {p.status === 'ISSUED' ? (
@@ -1468,7 +1481,7 @@ export function RepairOrdersView({ onNavigate }: { onNavigate?: (route: RouteId)
                 <option value="">{isAr ? 'اختر القطعة من المستودع...' : 'Select item from inventory...'}</option>
                 {inventoryItems.map((item) => (
                   <option key={item.id} value={item.id} disabled={item.quantityInStock <= 0}>
-                    {item.name} [{item.partCode}] — {t('quantityInStock')}: {item.quantityInStock} ({formatOMR(item.sellingPriceBaisa)})
+                    {item.name} [{item.partCode}] — {t('quantityInStock')}: {item.quantityInStock} ({formatBaisa(item.sellingPriceBaisa)})
                   </option>
                 ))}
               </select>
@@ -1612,8 +1625,8 @@ export function RepairOrdersView({ onNavigate }: { onNavigate?: (route: RouteId)
               {/* Header */}
               <div className="flex items-center justify-between border-b pb-4 border-slate-300">
                 <div>
-                  <h2 className="text-base font-bold text-slate-900">كراج الرواحي لصيانة السيارات</h2>
-                  <p className="text-[11px] text-slate-600">AL RAWAHI GARAGE MANAGEMENT SYSTEM</p>
+                  <h2 className="text-base font-bold text-slate-900">الرواحي للعناية بالسيارات</h2>
+                  <p className="text-[11px] text-slate-600">AL RAWAHI AUTO CARE</p>
                   <p className="text-[10px] text-slate-500">مسقط، سلطنة عُمان | هاتف: +968 24567890</p>
                 </div>
                 <div className="text-end">
@@ -1636,6 +1649,15 @@ export function RepairOrdersView({ onNavigate }: { onNavigate?: (route: RouteId)
                   <span className="font-bold block text-slate-700">بيانات المركبة:</span>
                   <p className="font-bold text-slate-900">{selectedRO.vehiclePlate}</p>
                   <p className="text-slate-600">{selectedRO.vehicleMake} {selectedRO.vehicleModel}</p>
+                  {(() => {
+                    const v = vehicles.find((veh) => veh.id === selectedRO.vehicleId);
+                    const vin = v?.vin || (selectedRO as any).vehicleVin;
+                    return vin ? (
+                      <p className="text-slate-800 font-mono text-[11px] font-bold">
+                        رقم الشاصي (VIN): <span dir="ltr">{vin}</span>
+                      </p>
+                    ) : null;
+                  })()}
                   <p className="text-slate-500">عداد الدخول: {selectedRO.odometerIn} كم</p>
                 </div>
               </div>
@@ -1654,12 +1676,64 @@ export function RepairOrdersView({ onNavigate }: { onNavigate?: (route: RouteId)
                 </div>
               </div>
 
+              {/* Detailed Parts Table */}
+              {roParts.length > 0 && (
+                <div className="space-y-1">
+                  <span className="font-bold text-slate-700 text-xs">قطع الغيار المستخدمة:</span>
+                  <table className="w-full text-xs border border-slate-300">
+                    <thead className="bg-slate-100">
+                      <tr>
+                        <th className="py-1 px-2 text-start">المنتج</th>
+                        <th className="py-1 px-2 text-center">الكمية</th>
+                        <th className="py-1 px-2 text-end">السعر</th>
+                        <th className="py-1 px-2 text-end">الإجمالي</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-200">
+                      {roParts.map((p) => (
+                        <tr key={p.id}>
+                          <td className="py-1 px-2">{p.partName}</td>
+                          <td className="py-1 px-2 text-center">{p.quantity}</td>
+                          <td className="py-1 px-2 text-end">{formatBaisa(p.unitPriceBaisa, { arabicLabel: isAr })}</td>
+                          <td className="py-1 px-2 text-end font-bold">{formatBaisa(p.totalPriceBaisa, { arabicLabel: isAr })}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {/* Detailed Labor Table */}
+              {roLaborTasks.length > 0 && (
+                <div className="space-y-1">
+                  <span className="font-bold text-slate-700 text-xs">أجور الخدمات والصيانة:</span>
+                  <table className="w-full text-xs border border-slate-300">
+                    <thead className="bg-slate-100">
+                      <tr>
+                        <th className="py-1 px-2 text-start">الخدمة</th>
+                        <th className="py-1 px-2 text-center">الساعات</th>
+                        <th className="py-1 px-2 text-end">المبلغ</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-200">
+                      {roLaborTasks.map((t) => (
+                        <tr key={t.id}>
+                          <td className="py-1 px-2">{t.description}</td>
+                          <td className="py-1 px-2 text-center">{t.hours}</td>
+                          <td className="py-1 px-2 text-end font-bold">{formatBaisa(t.laborChargeBaisa, { arabicLabel: isAr })}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
               {/* Financial Snapshot */}
-              <div className="border-t pt-2 flex justify-between items-center text-xs font-semibold">
-                <span>إجمالي قطع الغيار: {formatOMR(selectedRO.partsTotalBaisa || 0)}</span>
-                <span>أجور اليد: {formatOMR(selectedRO.laborTotalBaisa || 0)}</span>
+              <div className="border-t border-b py-2 flex justify-between items-center text-xs font-semibold">
+                <span>إجمالي قطع الغيار: {formatBaisa(selectedRO.partsTotalBaisa || 0, { arabicLabel: isAr, useThousandsSeparator: true })}</span>
+                <span>أجور اليد: {formatBaisa(selectedRO.laborTotalBaisa || 0, { arabicLabel: isAr, useThousandsSeparator: true })}</span>
                 <span className="text-sm font-bold text-slate-900">
-                  الإجمالي النهائي (شامل ضريبة 5%): {formatOMR(selectedRO.grandTotalBaisa || 0)}
+                  الإجمالي النهائي (شامل ضريبة 5%): {formatBaisa(selectedRO.grandTotalBaisa || 0, { arabicLabel: isAr, useThousandsSeparator: true })}
                 </span>
               </div>
 

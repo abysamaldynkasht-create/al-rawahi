@@ -59,8 +59,8 @@ const garageApi: GarageApi = {
   getAllSettings: (): Promise<IpcResult<Record<string, string>>> => ipcRenderer.invoke('settings:getAll'),
 
   // Customers
-  getCustomers: (searchQuery?: string, includeArchived?: boolean): Promise<IpcResult<CustomerDTO[]>> =>
-    ipcRenderer.invoke('customers:get', searchQuery, includeArchived),
+  getCustomers: (searchQuery?: string, includeArchived?: boolean, includeTemporary?: boolean): Promise<IpcResult<CustomerDTO[]>> =>
+    ipcRenderer.invoke('customers:get', searchQuery, includeArchived, includeTemporary),
   getCustomerById: (id: string): Promise<IpcResult<CustomerDTO | null>> => ipcRenderer.invoke('customers:getById', id),
   createCustomer: (input: CustomerInput): Promise<IpcResult<CustomerDTO>> => ipcRenderer.invoke('customers:create', input),
   updateCustomer: (id: string, input: Partial<CustomerInput>): Promise<IpcResult<CustomerDTO>> =>
@@ -165,6 +165,7 @@ const garageApi: GarageApi = {
   getInvoices: (customerId?: string): Promise<IpcResult<any[]>> => ipcRenderer.invoke('invoices:get', customerId),
   getInvoiceById: (id: string): Promise<IpcResult<any>> => ipcRenderer.invoke('invoices:getById', id),
   createInvoice: (input: any): Promise<IpcResult<any>> => ipcRenderer.invoke('invoices:create', input),
+  updateInvoice: (id: string, input: any): Promise<IpcResult<any>> => ipcRenderer.invoke('invoices:update', { id, ...input }),
   getPayments: (invoiceId?: string): Promise<IpcResult<any[]>> => ipcRenderer.invoke('payments:get', invoiceId),
   getPaymentById: (id: string): Promise<IpcResult<any>> => ipcRenderer.invoke('payments:getById', id),
   recordPayment: (input: any): Promise<IpcResult<any>> => ipcRenderer.invoke('payments:record', input),
@@ -197,8 +198,6 @@ const garageApi: GarageApi = {
   // Printing & PDF Generation
   printInvoice: (invoiceId: string, language: 'ar' | 'en'): Promise<IpcResult<any>> =>
     ipcRenderer.invoke('print:invoice', invoiceId, language),
-  exportInvoicePdf: (invoiceId: string, language: 'ar' | 'en'): Promise<IpcResult<any>> =>
-    ipcRenderer.invoke('print:exportPdf', invoiceId, language),
 };
 
 contextBridge.exposeInMainWorld('garageApi', garageApi);

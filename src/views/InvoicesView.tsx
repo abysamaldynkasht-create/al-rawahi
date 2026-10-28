@@ -23,6 +23,9 @@ import {
   RefreshCw,
   Eye,
   Filter,
+  Trash2,
+  Package,
+  Layers,
 } from 'lucide-react';
 import { useLanguage } from '../i18n/LanguageContext.tsx';
 import type { RouteId } from '../i18n/translations.ts';
@@ -34,7 +37,7 @@ import { Modal } from '../components/ui/Modal.tsx';
 import { EmptyState } from '../components/ui/EmptyState.tsx';
 import { useToast } from '../components/ui/Toast.tsx';
 import { garageApi } from '../services/garageClient.ts';
-import type { InvoiceDTO, CustomerDTO, VehicleDTO, PaymentMethod } from '../types/ipc.ts';
+import type { InvoiceDTO, CustomerDTO, VehicleDTO, PaymentMethod, InventoryItemDTO, InvoiceItemInput } from '../types/ipc.ts';
 import { formatOMR, toBaisa, fromBaisa } from '../core/currency.ts';
 import { CustomerRetentionModal } from '../components/CustomerRetentionModal.tsx';
 import { InvoiceDocumentModal } from '../components/InvoiceDocumentModal.tsx';
@@ -69,8 +72,18 @@ export function InvoicesView({ onNavigate }: { onNavigate?: (route: RouteId) => 
   const [isNewInvoiceOpen, setIsNewInvoiceOpen] = useState(false);
   const [selectedCustomerId, setSelectedCustomerId] = useState('');
   const [selectedVehicleId, setSelectedVehicleId] = useState('');
-  const [partsAmountOmr, setPartsAmountOmr] = useState('15.000');
-  const [laborAmountOmr, setLaborAmountOmr] = useState('10.000');
+  const [inventory, setInventory] = useState<InventoryItemDTO[]>([]);
+  const [modalItems, setModalItems] = useState<Array<{
+    id: string;
+    itemType: 'PART' | 'LABOR';
+    sourceId?: string;
+    description: string;
+    quantity: number;
+    unit: string;
+    unitPriceOmr: string;
+  }>>([
+    { id: '1', itemType: 'LABOR', description: 'أجور يد فحص وصيانة دورية', quantity: 1, unit: 'خدمة', unitPriceOmr: '10.000' },
+  ]);
   const [discountOmr, setDiscountOmr] = useState('0.000');
   const [invoiceNotes, setInvoiceNotes] = useState('');
   const [isCreatingInvoice, setIsCreatingInvoice] = useState(false);
@@ -79,10 +92,11 @@ export function InvoicesView({ onNavigate }: { onNavigate?: (route: RouteId) => 
   const loadData = async () => {
     setIsLoading(true);
     try {
-      const [invRes, custRes, vehRes] = await Promise.all([
+      const [invRes, custRes, vehRes, invItemsRes] = await Promise.all([
         garageApi.getInvoices(),
         garageApi.getCustomers(undefined, true, true), // include temporary customers
         garageApi.getVehicles(),
+        garageApi.getInventory(),
       ]);
 
       if (invRes.success && invRes.data) {
@@ -93,6 +107,9 @@ export function InvoicesView({ onNavigate }: { onNavigate?: (route: RouteId) => 
       }
       if (vehRes.success && vehRes.data) {
         setVehicles(vehRes.data);
+      }
+      if (invItemsRes.success && invItemsRes.data) {
+        setInventory(invItemsRes.data.filter((i) => i.isActive));
       }
     } catch {
       showToast('Error loading invoices', 'error');
@@ -209,25 +226,53 @@ export function InvoicesView({ onNavigate }: { onNavigate?: (route: RouteId) => 
   const handleCreateInvoice = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedCustomerId) {
-      showToast('Please select a customer', 'error');
+      showToast(isAr ? 'يرجى اختيار العميل أولاً' : 'Please select a customer', 'error');
+      return;
+    }
+
+    if (modalItems.length === 0) {
+      showToast(isAr ? 'يرجى إضافة بند خدمة أو قطعة غيار واحدة على الأقل' : 'Please add at least one line item', 'error');
       return;
     }
 
     setIsCreatingInvoice(true);
     try {
+      const finalItems: InvoiceItemInput[] = modalItems.map((item) => {
+        const unitBaisa = toBaisa(parseFloat(item.unitPriceOmr) || 0);
+        const lineBaisa = Math.round(unitBaisa * (item.quantity || 1));
+        return {
+          itemType: item.itemType,
+          sourceId: item.sourceId || undefined,
+          description: item.description,
+          quantity: item.quantity,
+          unit: item.unit || (item.itemType === 'LABOR' ? 'خدمة' : 'قطعة'),
+          unitPriceBaisa: unitBaisa,
+          lineTotalBaisa: lineBaisa,
+        };
+      });
+
+      const partsBaisa = finalItems
+        .filter((i) => i.itemType === 'PART')
+        .reduce((sum, i) => sum + i.lineTotalBaisa, 0);
+      const laborBaisa = finalItems
+        .filter((i) => i.itemType === 'LABOR')
+        .reduce((sum, i) => sum + i.lineTotalBaisa, 0);
+
       const res = await garageApi.createInvoice({
         customerId: selectedCustomerId,
         vehicleId: selectedVehicleId || undefined,
-        subtotalPartsBaisa: toBaisa(partsAmountOmr),
-        subtotalLaborBaisa: toBaisa(laborAmountOmr),
+        status: 'ISSUED',
+        subtotalPartsBaisa: partsBaisa,
+        subtotalLaborBaisa: laborBaisa,
         discountBaisa: toBaisa(discountOmr),
         taxRatePercent: 5.0,
         notes: invoiceNotes.trim() || undefined,
         invoiceLanguage: 'ar',
+        items: finalItems,
       });
 
       if (res.success && res.data) {
-        showToast('Invoice created successfully', 'success');
+        showToast(isAr ? `تم إصدار الفاتورة رقم ${res.data.invoiceNumber} بنجاح` : 'Invoice created successfully', 'success');
         setIsNewInvoiceOpen(false);
         await loadData();
       } else {
@@ -595,8 +640,8 @@ export function InvoicesView({ onNavigate }: { onNavigate?: (route: RouteId) => 
                 onChange={(e) => setPaymentMethod(e.target.value as PaymentMethod)}
                 className="w-full bg-[#121927] border border-[#233047] rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:ring-1 focus:ring-amber-500"
               >
-                <option value="CASH">{isAr ? 'نقداً (Cash)' : 'Cash'}</option>
-                <option value="CARD_RECORDED">{isAr ? 'بطاقة بنكية مسجلة (Card)' : 'Card Recorded'}</option>
+                <option value="CASH">{isAr ? 'نقداً (كاش / Cash)' : 'Cash'}</option>
+                <option value="CARD_RECORDED">{isAr ? 'بطاقة (فيزا / مدى / Card)' : 'Card (Visa / Mada)'}</option>
                 <option value="BANK_TRANSFER">{isAr ? 'تحويل بنكي (Bank Transfer)' : 'Bank Transfer'}</option>
               </select>
             </div>
@@ -625,91 +670,220 @@ export function InvoicesView({ onNavigate }: { onNavigate?: (route: RouteId) => 
         </Modal>
       )}
 
-      {/* New Invoice Modal */}
+      {/* New Invoice Modal with Itemized Inventory Items */}
       {isNewInvoiceOpen && (
         <Modal
           isOpen={true}
           onClose={() => setIsNewInvoiceOpen(false)}
-          title={isAr ? 'إصدار فاتورة خدمة / زيارة جديدة' : 'Create Service Visit Invoice'}
-          maxWidth="md"
+          title={isAr ? 'إصدار فاتورة مفصلة جديدة (مرتبطة بالمخزون)' : 'Create Itemized Invoice (Linked to Inventory)'}
+          maxWidth="2xl"
         >
           <form onSubmit={handleCreateInvoice} className="space-y-4">
-            <div className="space-y-1.5">
-              <label className="text-xs font-medium text-slate-300 block">
-                {t('customerInputLabel')}
-              </label>
-              <select
-                value={selectedCustomerId}
-                onChange={(e) => setSelectedCustomerId(e.target.value)}
-                className="w-full bg-[#121927] border border-[#233047] rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:ring-1 focus:ring-amber-500"
-                required
-              >
-                {customers.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.fullName} {c.isPermanent === false ? (isAr ? '(زيارة مؤقتة)' : '(Temporary)') : ''}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div className="space-y-1.5">
-              <label className="text-xs font-medium text-slate-300 block">
-                {t('vehiclesTitle')} (اختياري)
-              </label>
-              <select
-                value={selectedVehicleId}
-                onChange={(e) => setSelectedVehicleId(e.target.value)}
-                className="w-full bg-[#121927] border border-[#233047] rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:ring-1 focus:ring-amber-500"
-              >
-                <option value="">{isAr ? '— بدون ربط مركبة —' : '— No vehicle linked —'}</option>
-                {vehicles
-                  .filter((v) => !selectedCustomerId || v.customerId === selectedCustomerId)
-                  .map((v) => (
-                    <option key={v.id} value={v.id}>
-                      {v.plateNumber} ({v.make} {v.model})
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-slate-300 block">
+                  {t('customerInputLabel')} *
+                </label>
+                <select
+                  value={selectedCustomerId}
+                  onChange={(e) => setSelectedCustomerId(e.target.value)}
+                  className="w-full bg-[#121927] border border-[#233047] rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:ring-1 focus:ring-amber-500"
+                  required
+                >
+                  <option value="">{isAr ? '-- اختر العميل --' : '-- Select Customer --'}</option>
+                  {customers.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.fullName} {c.isPermanent === false ? (isAr ? '(زيارة مؤقتة)' : '(Temporary)') : ''}
                     </option>
                   ))}
-              </select>
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <label className="text-xs font-medium text-slate-300 block">
-                  {t('subtotalParts')} (ر.ع.)
-                </label>
-                <Input
-                  type="number"
-                  step="0.001"
-                  min="0"
-                  value={partsAmountOmr}
-                  onChange={(e) => setPartsAmountOmr(e.target.value)}
-                />
+                </select>
               </div>
 
               <div className="space-y-1.5">
                 <label className="text-xs font-medium text-slate-300 block">
-                  {t('subtotalLabor')} (ر.ع.)
+                  {t('vehiclesTitle')} (اختياري)
                 </label>
-                <Input
-                  type="number"
-                  step="0.001"
-                  min="0"
-                  value={laborAmountOmr}
-                  onChange={(e) => setLaborAmountOmr(e.target.value)}
-                />
+                <select
+                  value={selectedVehicleId}
+                  onChange={(e) => setSelectedVehicleId(e.target.value)}
+                  className="w-full bg-[#121927] border border-[#233047] rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:ring-1 focus:ring-amber-500"
+                >
+                  <option value="">{isAr ? '— بدون ربط مركبة —' : '— No vehicle linked —'}</option>
+                  {vehicles
+                    .filter((v) => !selectedCustomerId || v.customerId === selectedCustomerId)
+                    .map((v) => (
+                      <option key={v.id} value={v.id}>
+                        {v.plateNumber} ({v.make} {v.model})
+                      </option>
+                    ))}
+                </select>
+              </div>
+            </div>
+
+            {/* Itemized Table */}
+            <div className="space-y-2 border border-slate-800 rounded-xl p-3 bg-[#0d131f]">
+              <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+                <span className="text-xs font-bold text-amber-300 flex items-center gap-1.5">
+                  <Package className="w-3.5 h-3.5" />
+                  {isAr ? 'بنود الفاتورة التفصيلية (قطع ومواد وأجور يد)' : 'Detailed Line Items'}
+                </span>
+                <div className="flex items-center gap-2">
+                  <select
+                    onChange={(e) => {
+                      const selectedItem = inventory.find((i) => i.id === e.target.value);
+                      if (selectedItem) {
+                        setModalItems((prev) => [
+                          ...prev,
+                          {
+                            id: Date.now().toString(),
+                            itemType: 'PART',
+                            sourceId: selectedItem.id,
+                            description: selectedItem.name,
+                            quantity: 1,
+                            unit: selectedItem.unit || 'قطعة',
+                            unitPriceOmr: fromBaisa(selectedItem.sellingPriceBaisa).toFixed(3),
+                          },
+                        ]);
+                        e.target.value = '';
+                      }
+                    }}
+                    defaultValue=""
+                    className="bg-amber-500/10 border border-amber-500/30 text-amber-300 rounded px-2 py-1 text-[11px] focus:outline-none cursor-pointer"
+                  >
+                    <option value="" disabled>+ {isAr ? 'إدراج قطعة من المستودع' : 'Add from Inventory'}</option>
+                    {inventory.map((item) => (
+                      <option key={item.id} value={item.id}>
+                        {item.name} ({fromBaisa(item.sellingPriceBaisa).toFixed(3)} ر.ع / {item.unit || 'قطعة'})
+                      </option>
+                    ))}
+                  </select>
+
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      setModalItems((prev) => [
+                        ...prev,
+                        {
+                          id: Date.now().toString(),
+                          itemType: 'LABOR',
+                          description: 'أجور يد وفحص فني',
+                          quantity: 1,
+                          unit: 'خدمة',
+                          unitPriceOmr: '5.000',
+                        },
+                      ]);
+                    }}
+                    className="text-[11px] h-7 px-2"
+                  >
+                    + {isAr ? 'إضافة خدمة' : 'Add Labor'}
+                  </Button>
+                </div>
+              </div>
+
+              {/* Items List */}
+              <div className="space-y-2 max-h-56 overflow-y-auto">
+                {modalItems.map((item, idx) => {
+                  const lineTotal = (parseFloat(item.unitPriceOmr) || 0) * (item.quantity || 1);
+                  return (
+                    <div
+                      key={item.id}
+                      className="grid grid-cols-12 gap-2 items-center bg-[#141d2f] p-2 rounded-lg border border-slate-800 text-xs"
+                    >
+                      <div className="col-span-1 text-center font-mono text-slate-500">{idx + 1}</div>
+                      <div className="col-span-4">
+                        <Input
+                          value={item.description}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setModalItems((prev) =>
+                              prev.map((m) => (m.id === item.id ? { ...m, description: val } : m))
+                            );
+                          }}
+                          placeholder={isAr ? 'بيان البند أو القطعة' : 'Description'}
+                        />
+                      </div>
+                      <div className="col-span-2">
+                        <Input
+                          type="number"
+                          min="1"
+                          value={item.quantity}
+                          onChange={(e) => {
+                            const q = parseInt(e.target.value) || 1;
+                            setModalItems((prev) =>
+                              prev.map((m) => (m.id === item.id ? { ...m, quantity: q } : m))
+                            );
+                          }}
+                          dir="ltr"
+                        />
+                      </div>
+                      <div className="col-span-2">
+                        <Input
+                          value={item.unit}
+                          onChange={(e) => {
+                            const u = e.target.value;
+                            setModalItems((prev) =>
+                              prev.map((m) => (m.id === item.id ? { ...m, unit: u } : m))
+                            );
+                          }}
+                          placeholder="الوحدة"
+                        />
+                      </div>
+                      <div className="col-span-2">
+                        <Input
+                          type="number"
+                          step="0.100"
+                          value={item.unitPriceOmr}
+                          onChange={(e) => {
+                            const p = e.target.value;
+                            setModalItems((prev) =>
+                              prev.map((m) => (m.id === item.id ? { ...m, unitPriceOmr: p } : m))
+                            );
+                          }}
+                          dir="ltr"
+                        />
+                      </div>
+                      <div className="col-span-1 flex items-center justify-end">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setModalItems((prev) => prev.filter((m) => m.id !== item.id));
+                          }}
+                          className="text-slate-500 hover:text-rose-400 p-1"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Dynamic Totals */}
+              <div className="pt-2 border-t border-slate-800 flex items-center justify-between text-xs text-slate-300">
+                <span>
+                  {isAr ? 'المجموع التفصيلي:' : 'Calculated Total:'}{' '}
+                  <strong className="text-amber-400 font-mono">
+                    {modalItems.reduce((acc, m) => acc + (parseFloat(m.unitPriceOmr) || 0) * (m.quantity || 1), 0).toFixed(3)} ر.ع
+                  </strong>
+                </span>
+                <span className="text-[11px] text-slate-400">
+                  {isAr ? '+ 5% ضريبة القيمة المضافة تُحسب آلياً' : '+ 5% VAT calculated'}
+                </span>
               </div>
             </div>
 
             <div className="space-y-1.5">
               <label className="text-xs font-medium text-slate-300 block">
-                {isAr ? 'الملاحظات والخدمات المنفذة' : 'Notes & Performed Services'}
+                {isAr ? 'الملاحظات الإضافية (اختياري)' : 'Additional Notes (Optional)'}
               </label>
               <textarea
                 value={invoiceNotes}
                 onChange={(e) => setInvoiceNotes(e.target.value)}
                 rows={2}
-                className="w-full bg-[#121927] border border-[#233047] rounded-lg p-2.5 text-xs text-white focus:outline-none focus:ring-1 focus:ring-amber-500"
-                placeholder={isAr ? 'مثال: فحص دوري، تغيير زيت وفلتر أصلي...' : 'e.g. Periodic inspection, engine oil and OEM filter...'}
+                className="w-full bg-[#121927] border border-[#233047] rounded-lg p-2 text-xs text-white focus:outline-none focus:ring-1 focus:ring-amber-500"
+                placeholder={isAr ? 'ملاحظات الصيانة والضمان...' : 'Warranty notes, terms...'}
               />
             </div>
 
@@ -718,7 +892,7 @@ export function InvoicesView({ onNavigate }: { onNavigate?: (route: RouteId) => 
                 {t('cancel')}
               </Button>
               <Button type="submit" variant="gold" size="sm" disabled={isCreatingInvoice}>
-                {isCreatingInvoice ? t('loading') : t('save')}
+                {isCreatingInvoice ? t('loading') : (isAr ? 'إصدار الفاتورة وتحديث المخزون' : 'Issue Invoice & Deduct Stock')}
               </Button>
             </div>
           </form>

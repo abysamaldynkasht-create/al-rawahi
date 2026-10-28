@@ -54,7 +54,7 @@ export function SettingsView({ onNavigate }: { onNavigate?: (route: any) => void
   const [isRestoring, setIsRestoring] = useState(false);
 
   // System Settings State
-  const [garageName, setGarageName] = useState('كراج الرواحي للعناية بالسيارات');
+  const [garageName, setGarageName] = useState('الرواحي للعناية بالسيارات');
   const [crNumber, setCrNumber] = useState('1092834');
   const [vatNumber, setVatNumber] = useState('OM1100234567');
   const [phone, setPhone] = useState('+968 91234567');

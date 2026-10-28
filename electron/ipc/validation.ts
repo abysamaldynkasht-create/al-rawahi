@@ -150,16 +150,39 @@ export const IdParamSchema = z.string().trim().min(1).max(100);
 
 export const SearchQuerySchema = z.string().max(200).optional();
 
+export const InvoiceItemInputSchema = z.object({
+  itemType: z.enum(['PART', 'LABOR']),
+  sourceId: z.string().trim().optional().or(z.literal('')),
+  description: z.string().trim().min(1, 'Item description is required').max(500),
+  quantity: z.number().positive('Quantity must be greater than zero'),
+  unit: z.string().trim().max(30).optional().default('قطعة'),
+  unitPriceBaisa: z.number().int().nonnegative('Unit price must be non-negative'),
+  costPriceBaisa: z.number().int().nonnegative().optional().default(0),
+  lineTotalBaisa: z.number().int().nonnegative('Line total must be non-negative'),
+});
+
 export const InvoiceInputSchema = z.object({
   customerId: z.string().trim().min(1, 'Customer ID is required'),
   vehicleId: z.string().trim().optional().or(z.literal('')),
   repairOrderId: z.string().trim().optional().or(z.literal('')),
+  status: z.enum(['DRAFT', 'ISSUED', 'PARTIALLY_PAID', 'PAID', 'CANCELLED']).optional().default('ISSUED'),
   subtotalPartsBaisa: z.number().int().nonnegative().optional().default(0),
   subtotalLaborBaisa: z.number().int().nonnegative().optional().default(0),
   discountBaisa: z.number().int().nonnegative().optional().default(0),
   taxRatePercent: z.number().nonnegative().optional().default(5.0),
   notes: z.string().trim().max(1000).optional().or(z.literal('')),
   invoiceLanguage: z.enum(['ar', 'en']).optional().default('ar'),
+  items: z.array(InvoiceItemInputSchema).optional(),
+});
+
+export const InvoiceUpdateSchema = z.object({
+  id: z.string().trim().min(1, 'Invoice ID is required'),
+  status: z.enum(['DRAFT', 'ISSUED', 'PARTIALLY_PAID', 'PAID', 'CANCELLED']).optional(),
+  discountBaisa: z.number().int().nonnegative().optional(),
+  taxRatePercent: z.number().nonnegative().optional(),
+  notes: z.string().trim().max(1000).optional().or(z.literal('')),
+  invoiceLanguage: z.enum(['ar', 'en']).optional(),
+  items: z.array(InvoiceItemInputSchema).optional(),
 });
 
 export const PaymentInputSchema = z.object({

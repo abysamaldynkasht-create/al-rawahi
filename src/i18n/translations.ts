@@ -16,7 +16,6 @@ export type RouteId =
   | 'vehicleHandover'
   | 'repairOrders'
   | 'technicians'
-  | 'overtime'
   | 'inventory'
   | 'invoices'
   | 'payments'
@@ -169,9 +168,9 @@ export const ROUTE_REGISTRY: Record<RouteId, RouteMeta> = {
 
 export const TRANSLATIONS = {
   ar: {
-    appName: 'كراج الرواحي',
+    appName: 'الرواحي للعناية بالسيارات',
     appSubtitle: 'نظام إدارة الكراج المكتبي المتكامل',
-    tagline: 'AL RAWAHI GARAGE MANAGEMENT SYSTEM',
+    tagline: 'AL RAWAHI AUTO CARE GARAGE MANAGEMENT SYSTEM',
     developerLabel: 'تطوير:',
     developerName: 'AKASHA AI',
     desktopTag: 'تطبيق مكتبي غير متصل بالإنترنت',
@@ -482,9 +481,9 @@ export const TRANSLATIONS = {
     strictSeparationNotice: 'ملاحظة محاسبية: لا يتم احتساب تكلفة قطع الغيار نهائياً ضمن إنتاجية العامل؛ الإنتاجية تُحسب حصراً من أجور اليد المعتمدة.',
   },
   en: {
-    appName: 'AL RAWAHI GARAGE',
-    appSubtitle: 'Integrated Desktop Garage Management System',
-    tagline: 'AL RAWAHI GARAGE MANAGEMENT SYSTEM',
+    appName: 'AL RAWAHI AUTO CARE',
+    appSubtitle: 'Integrated Desktop Auto Care Management System',
+    tagline: 'AL RAWAHI AUTO CARE GARAGE MANAGEMENT SYSTEM',
     developerLabel: 'Developer:',
     developerName: 'AKASHA AI',
     desktopTag: 'Offline Desktop Application',
